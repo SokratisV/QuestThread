@@ -13,7 +13,7 @@ local FLAT = "Interface\\Buttons\\WHITE8X8"
 -- Look and colours follow FlareUI's windows: a dark panel, a thin bronze edge (FlareUI's own
 -- Thin.tga border, MIT-licensed, copied here), Blizzard-yellow titles, and Blizzard's grey dropdown
 -- face for buttons. The bronze values are FlareUI's.
-local THIN = "Interface\\AddOns\\QuestChain\\Thin.tga"
+local THIN = "Interface\\AddOns\\QuestThread\\Thin.tga"
 local BRONZE, BRONZE_HOVER, BRONZE_LIT, BRONZE_MUTED = { 0.55, 0.42, 0.24 }, { 0.98, 0.74, 0.36 }, { 1, 0.86, 0.46 }, { 0.61, 0.48, 0.29 }
 local FACE = "common-dropdown-c-button"
 
@@ -26,11 +26,13 @@ end
 
 local frame, content, scroll
 local rows, iconPool = {}, {}
-local current, showRemaining, notice
+local current, showRemaining, notice, results
+
+local function Say(msg) print("|cffffd100QuestThread:|r " .. msg) end
 
 local function DB()
-  QuestChainDB = QuestChainDB or {}
-  return QuestChainDB
+  QuestThreadDB = QuestThreadDB or {}
+  return QuestThreadDB
 end
 
 local function Num(n)
@@ -141,6 +143,59 @@ local function PlaceIcons(row, items, x0, y0, perLine)
   return lines
 end
 
+-- ---- hovering / clicking a quest row ----
+local STATUS_TEXT = {
+  done = { "Completed", 0.4, 0.8, 0.4 }, log = { "In your quest log", 0.56, 0.77, 1 },
+  available = { "Available now", 0.4, 1, 0.4 }, locked = { "Locked", 1, 0.4, 0.4 },
+}
+
+local function ShowQuestTip(row)
+  local e = row.entry
+  if not e then return end
+  GameTooltip:SetOwner(row, "ANCHOR_RIGHT")
+  GameTooltip:AddLine(e.name, 1, 0.82, 0)
+  local lv = e.level and e.level > 0 and ("Level " .. e.level) or nil
+  if e.reqLevel and e.reqLevel > 0 then lv = (lv and (lv .. " · ") or "") .. "requires level " .. e.reqLevel end
+  if lv then GameTooltip:AddLine(lv, 0.8, 0.8, 0.8) end
+  local st = STATUS_TEXT[e.status]
+  if st then GameTooltip:AddLine(st[1], st[2], st[3], st[4]) end
+  for _, line in ipairs(e.unmet or {}) do GameTooltip:AddLine(line, 1, 0.5, 0.5, true) end
+  if type(e.objective) == "table" and #e.objective > 0 then
+    GameTooltip:AddLine(" ")
+    for _, line in ipairs(e.objective) do GameTooltip:AddLine(line, 1, 1, 1, true) end
+  end
+  for _, which in ipairs({ "start", "end" }) do
+    local givers = Data.Givers(e.id, which)
+    for i = 1, math.min(2, #givers) do
+      local g = givers[i]
+      local place = Data.Locate(g, e.id)
+      GameTooltip:AddLine((which == "start" and "Starts: " or "Ends: ") .. g.name .. (place and (" — " .. Data.PlaceText(place)) or ""), 0.9, 0.9, 0.6, true)
+    end
+  end
+  GameTooltip:AddLine(" ")
+  GameTooltip:AddLine("Left-click: open this quest's chain", 0.6, 0.6, 0.6)
+  GameTooltip:AddLine("Right-click: waypoint to the start (the end once it is in your log)", 0.6, 0.6, 0.6, true)
+  GameTooltip:AddLine("Shift+Right-click: waypoint to the end", 0.6, 0.6, 0.6)
+  GameTooltip:Show()
+end
+
+local function WaypointFor(row, wantEnd)
+  local e = row.entry
+  if not e then return end
+  local which = (wantEnd or e.status == "log") and "end" or "start"
+  local givers = Data.Givers(e.id, which)
+  if #givers == 0 then Say("No " .. which .. " location is known for that quest."); return end
+  for _, g in ipairs(givers) do
+    local place = Data.Locate(g, e.id)
+    if place then
+      local ok, msg = Data.Waypoint(place, g.name)
+      if ok then Say(("Waypoint set to %s, %s."):format(g.name, Data.PlaceText(place))) else Say(msg or "Could not set a waypoint.") end
+      return
+    end
+  end
+  Say("No map location is known for " .. givers[1].name .. ".")
+end
+
 -- ---- rows ----
 local function GetRow(i)
   local row = rows[i]
@@ -161,7 +216,13 @@ local function GetRow(i)
   row.xp:SetPoint("TOPRIGHT", -2, -6); row.xp:SetWidth(104)
   row.rep = Text(row, "GameFontDisableSmall")
   row.rep:SetWidth(CONTENT_W - 40)
-  row:SetScript("OnClick", function(self) if self.questId then UI.Open(self.questId) end end)
+  row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+  row:SetScript("OnClick", function(self, button)
+    if not self.questId then return end
+    if button == "RightButton" and self.entry then WaypointFor(self, IsShiftKeyDown and IsShiftKeyDown()) else UI.Open(self.questId) end
+  end)
+  row:SetScript("OnEnter", ShowQuestTip)
+  row:SetScript("OnLeave", function() GameTooltip:Hide() end)
   rows[i] = row
   return row
 end
@@ -197,12 +258,25 @@ local function UpdateThumb()
   frame.thumb:Show(); frame.track:Show()
 end
 
+local function PlaceRow(n, y, h)
+  local row = GetRow(n)
+  row:ClearAllPoints()
+  row:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -y)
+  row:SetHeight(h)
+  row:Show()
+  row.hl:Hide(); row.bar:Hide()
+  row.questId, row.entry = nil, nil
+  row.rep:Hide(); row.rep:SetWordWrap(false); row.rep:SetWidth(CONTENT_W - 40)
+  row.xp:SetText(""); row.num:SetText("")
+  return row
+end
+
 local function Render()
   if not frame then return end
   for _, row in ipairs(rows) do row:Hide(); ReleaseIcons(row) end
 
   if Data.state == "building" then
-    frame.title:SetText("QuestChain")
+    frame.title:SetText("QuestThread")
     frame.sub:SetText(("Reading QuestieDB… %d%%"):format(math.floor(Data.progress * 100)))
     frame.stats:SetText("")
     content:SetHeight(1)
@@ -212,9 +286,28 @@ local function Render()
     frame.stats:SetText("")
     return
   end
+  if not current and results then
+    frame.title:SetText("Search results")
+    frame.sub:SetText((notice or "") .. " Click one to see its chain.")
+    frame.stats:SetText("")
+    local y = 0
+    for i, hit in ipairs(results) do
+      local row = PlaceRow(i, y, 24)
+      row.questId = hit.id
+      local lv = QuestDB.questLevel and QuestDB.questLevel(hit.id)
+      row.name:ClearAllPoints(); row.name:SetPoint("TOPLEFT", 4, -5); row.name:SetWidth(CONTENT_W - 10)
+      row.name:SetText((lv and lv > 0 and ("|cff9d9d9d[" .. lv .. "]|r ") or "") .. hit.name .. "  |cff808080#" .. hit.id .. "|r")
+      y = y + 24
+    end
+    for i = #results + 1, #rows do rows[i]:Hide() end
+    content:SetHeight(math.max(y, 1))
+    scroll:SetVerticalScroll(0)
+    UpdateThumb()
+    return
+  end
   if not current then
-    frame.title:SetText("QuestChain")
-    frame.sub:SetText(notice or "Enter a quest ID, link or exact name above, or open a quest in the quest log.")
+    frame.title:SetText("QuestThread")
+    frame.sub:SetText(notice or "Enter a quest ID, link or name above, or open a quest in the quest log.")
     frame.stats:SetText("")
     content:SetHeight(1)
     return
@@ -230,6 +323,7 @@ local function Render()
   end
 
   local level = UnitLevel and UnitLevel("player") or 0
+  local function nameOf(id) return Data.Name(id) or ("Quest " .. id) end
   local maxed = GetMaxPlayerLevel and level >= GetMaxPlayerLevel()
   local all, left = {}, {}
   local totalXp, leftXp = 0, 0
@@ -239,7 +333,8 @@ local function Render()
       local exact = Data.ClientXp(e.id)
       e.xpExact = exact ~= nil
       e.xp = exact or (maxed and 0 or Core.ScaledXp(e.xpBase, e.xpLevel, level))
-      e.status = Data.Status(e.id)
+      local base = Data.Status(e.id)
+      e.status, e.unmet = Core.StatusOf(e, base == "done", base == "log", Data.IsDone, level, nameOf)
       all[#all + 1] = e
       totalXp = totalXp + e.xp
       if e.status ~= "done" then left[#left + 1] = e; leftXp = leftXp + e.xp end
@@ -268,15 +363,7 @@ local function Render()
   local y, n, currentY = 0, 0, nil
   local function nextRow(h)
     n = n + 1
-    local row = GetRow(n)
-    row:ClearAllPoints()
-    row:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -y)
-    row:SetHeight(h)
-    row:Show()
-    row.hl:Hide(); row.bar:Hide()
-    row.questId = nil
-    row.rep:Hide(); row.rep:SetWordWrap(false); row.rep:SetWidth(CONTENT_W - 40)
-    row.xp:SetText(""); row.num:SetText("")
+    local row = PlaceRow(n, y, h)
     y = y + h
     return row
   end
@@ -315,9 +402,12 @@ local function Render()
       row.name:ClearAllPoints(); row.name:SetPoint("TOPLEFT", 28, -5)
       row.num:SetText(qi == 1 and tostring(li) or "·")
       local color = e.status == "done" and "|cff66cc66" or (isCurrent and "|cffffd100" or "|cffffffff")
-      local tag = e.status == "done" and "  |cff66cc66done|r" or (e.status == "log" and "  |cff8fc4ff in log|r" or "")
+      local tag = ({ done = "  |cff66cc66done|r", log = "  |cff8fc4fin log|r",
+        available = "  |cff66ff66available|r", locked = "  |cffff6666locked|r" })[e.status] or ""
+      local lvl = e.level and e.level > 0 and ("|cff9d9d9d[" .. e.level .. "]|r ") or ""
+      row.entry = e
       if isCurrent then tag = tag .. "  |cffffd100<< YOU ARE HERE|r" end
-      row.name:SetText(color .. e.name .. "|r" .. tag)
+      row.name:SetText(lvl .. color .. e.name .. "|r" .. tag)
       if e.xp > 0 then
         row.xp:SetText((e.xpExact and "" or "~") .. Num(e.xp) .. " XP")
       end
@@ -363,7 +453,7 @@ end
 
 local function Create()
   if frame then return frame end
-  local f = CreateFrame("Frame", "QuestChainFrame", UIParent, "BackdropTemplate")
+  local f = CreateFrame("Frame", "QuestThreadFrame", UIParent, "BackdropTemplate")
   f:SetSize(WIDTH, HEIGHT)
   f:SetFrameStrata("FULLSCREEN_DIALOG") -- above a fullscreen world map
   f:SetClampedToScreen(true)
@@ -376,6 +466,7 @@ local function Create()
     local p, _, rp, x, y = self:GetPoint()
     DB().pos = { p, rp, x, y }
   end)
+  f:SetScale(DB().scale or 1)
   local pos = DB().pos
   if pos then f:SetPoint(pos[1], UIParent, pos[2], pos[3], pos[4]) else f:SetPoint("CENTER", UIParent, "CENTER", 0, 0) end
 
@@ -413,7 +504,7 @@ local function Create()
 
   local hint = Text(box, "GameFontDisableSmall")
   hint:SetPoint("LEFT", 8, 0)
-  hint:SetText("Quest ID, link or exact name")
+  hint:SetText("Quest ID, link or name")
   box:SetScript("OnTextChanged", function(self) hint:SetShown(self:GetText() == "") end)
 
   local toggle = Button(f, "Show remaining", 104, 22)
@@ -464,7 +555,7 @@ end
 function UI.Open(questId)
   Create()
   current = questId and tonumber(questId) or current
-  notice = nil
+  notice, results = nil, nil
   frame:Show()
   frame:Raise()
   Data.Ensure(Render)
@@ -474,18 +565,36 @@ end
 
 function UI.OpenText(text)
   Create()
-  local id, msg = Data.Resolve(text)
+  local id, msg, hits = Data.Resolve(text)
   if not id then
-    current, notice = nil, msg or "Enter a quest ID, link or exact name."
+    current, notice, results = nil, msg or "Enter a quest ID, link or name.", hits
   else
-    current, notice = id, nil
-    if msg then print("|cffffd100QuestChain:|r " .. msg) end
+    current, notice, results = id, nil, nil
+    if msg then print("|cffffd100QuestThread:|r " .. msg) end
   end
   frame:Show()
   frame:Raise()
   Data.Ensure(Render)
   if Data.state == "building" then WatchBuild() end
   Render()
+end
+
+-- Window size: 0.6 to 1.6, remembered. Returns the value used.
+function UI.SetScale(v)
+  v = math.min(1.6, math.max(0.6, tonumber(v) or 1))
+  DB().scale = v
+  if frame then frame:SetScale(v) end
+  return v
+end
+
+-- Back to the middle of the screen at normal size.
+function UI.Reset()
+  DB().pos, DB().scale = nil, nil
+  if frame then
+    frame:SetScale(1)
+    frame:ClearAllPoints()
+    frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+  end
 end
 
 function UI.IsShown()

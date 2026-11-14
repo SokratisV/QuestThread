@@ -1,11 +1,11 @@
 local ADDON, ns = ...
 local Data, UI = ns.Data, ns.UI
 
-local function Say(msg) print("|cffffd100QuestChain:|r " .. msg) end
+local function Say(msg) print("|cffffd100QuestThread:|r " .. msg) end
 
 local function DB()
-  QuestChainDB = QuestChainDB or {}
-  return QuestChainDB
+  QuestThreadDB = QuestThreadDB or {}
+  return QuestThreadDB
 end
 
 -- The quest whose detail view is open in the quest log, or nil in the list view.
@@ -30,7 +30,7 @@ local function MakeChainButton(parent, w, h)
   b.bg:SetSize(20 * s, 20 * s)
   b.bg:SetPoint("TOPLEFT", 7 * s, -5 * s)
   b.icon = b:CreateTexture(nil, "ARTWORK")
-  b.icon:SetTexture("Interface\\AddOns\\QuestChain\\Chain.tga")
+  b.icon:SetTexture("Interface\\AddOns\\QuestThread\\Chain.tga")
   b.icon:SetSize(17 * s, 17 * s)
   b.icon:SetPoint("TOPLEFT", 7 * s + 1.5 * s, -5 * s - 1.5 * s)
   b.border = b:CreateTexture(nil, "OVERLAY")
@@ -253,14 +253,22 @@ local function StartIconWatch()
 end
 
 -- ---- slash command ----
-SLASH_QUESTCHAIN1 = "/qchain"
-SLASH_QUESTCHAIN2 = "/questchain"
-SlashCmdList["QUESTCHAIN"] = function(msg)
+SLASH_QUESTTHREAD1 = "/qthread"
+SLASH_QUESTTHREAD2 = "/questthread"
+SlashCmdList["QUESTTHREAD"] = function(msg)
   msg = (msg or ""):match("^%s*(.-)%s*$")
   if msg == "resetbutton" then
     DB().button = nil
     if detailButton then PlaceDetailButton() end
     Say("Detail-view button moved back to its default place.")
+  elseif msg == "reset" then
+    UI.Reset()
+    DB().button = nil
+    if detailButton then PlaceDetailButton() end
+    Say("Window and button put back (centre of the screen, normal size).")
+  elseif msg:match("^scale") then
+    local v = tonumber(msg:match("^scale%s+([%d%.]+)"))
+    if v then Say(("Window scale set to %.2f."):format(UI.SetScale(v))) else Say("Usage: /qthread scale 1.2 (from 0.6 to 1.6)") end
   elseif msg == "xpcheck" then
     local r = Data.XpCheck()
     if r.compared == 0 then

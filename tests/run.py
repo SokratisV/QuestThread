@@ -1,4 +1,4 @@
-"""Offline tests for QuestChain, on a real Lua 5.1 runtime (lupa.lua51), not the game.
+"""Offline tests for QuestThread, on a real Lua 5.1 runtime (lupa.lua51), not the game.
 
   node tests/dump-questiedb.js <AddOns> <data.json>      (once, reads the installed QuestieDB)
   python -I tests/run.py <data.json> [--mutate]
@@ -40,7 +40,7 @@ def source(name):
     return text
 
 
-loader = lua.eval("function(src, name, ns) return assert(loadstring(src, name))('QuestChain', ns) end")
+loader = lua.eval("function(src, name, ns) return assert(loadstring(src, name))('QuestThread', ns) end")
 ns = lua.table()
 for fn in ("Core.lua",):
     loader(source(fn), fn, ns)
@@ -187,7 +187,23 @@ function(quests, items)
   end
   _G.QuestScrollFrame = { ScrollBox = { ForEachFrame = function(self, fn) for _, r in ipairs(testRows) do fn(r) end end } }
   _G.UIParent = stub()
+  _G.tipLines = {}
   _G.GameTooltip = stub()
+  GameTooltip.AddLine = function(_, text) tipLines[#tipLines + 1] = text end
+  _G.waypointCalls = {}
+  _G.C_Map = {
+    GetMapInfo = function() return { name = "Elwynn Forest" } end,
+    OpenWorldMap = function(m) waypointCalls.opened = m end,
+    CanSetUserWaypointOnMap = function() return true end,
+    SetUserWaypoint = function(point) waypointCalls.point = point end,
+  }
+  _G.UiMapPoint = { CreateFromCoordinates = function(m, x, y) return { uiMapID = m, x = x, y = y } end }
+  _G.C_SuperTrack = { SetSuperTrackedUserWaypoint = function(v) waypointCalls.track = v end }
+  _G.NpcDB = {
+    name = function(id) return id == 1000 and "Test Giver" or nil end,
+    spawns = function(id) if id == 1000 then return { [12] = { { 42.5, 61.0 } }, [1] = { { 10, 10 } } } end end,
+  }
+  _G.ObjectDB = { name = function() return nil end, spawns = function() return nil end }
   _G.QuestMapFrame = stub()
   QuestMapFrame.DetailsFrame = stub()
   _G.testDetail = nil
@@ -217,7 +233,7 @@ function(quests, items)
   _G.C_Reputation = nil
   _G.GetFactionInfoByID = function(id) return "Faction" .. id end
   _G.SlashCmdList = {}
-  _G.QuestChainDB = nil
+  _G.QuestThreadDB = nil
   _G.printed = {}
   _G.print = function(...) printed[#printed + 1] = table.concat({ ... }, " ") end
   local function ent(tab, field)
@@ -228,6 +244,12 @@ function(quests, items)
     preQuestGroup = ent(quests, "pre"), preQuestSingle = ent(quests, "preS"), childQuests = ent(quests, "child"),
     nextQuestInChain = ent(quests, "next"), breadcrumbForQuestId = ent(quests, "bcFor"), breadcrumbs = ent(quests, "bcs"),
     name = ent(quests, "name"), reputationReward = ent(quests, "rep"),
+    questLevel = function(id) return 30 end,
+    requiredLevel = ent(quests, "reqLevel"),
+    objectivesText = function(id) if id == 166 then return { "Kill things." } end end,
+    startedBy = function(id) return { { 1000 } } end,
+    finishedBy = function(id) return { { 1000 } } end,
+    zoneOrSort = function(id) return 12 end,
     IdsByName = function(n) local l = {}; for id, q in pairs(quests) do if q.name == n then l[#l + 1] = id end end; table.sort(l); return l end,
   }
   _G.ItemDB = {
@@ -251,13 +273,13 @@ def to_lua_quests():
 
 env(to_lua_quests(), lua.table_from({int(k): lua.table_from(v) for k, v in raw["itemQuests"].items()}))
 xp_lua = lua.table_from({int(k): lua.table_from(v) for k, v in raw["xp"].items()})
-lua.globals().LibQuestieDB.Support.Get = lua.eval("function(t) return function(name) if name == 'QuestXP' then return { db = t } end end end")(xp_lua)
+lua.globals().LibQuestieDB.Support.Get = lua.eval("function(t) return function(name) if name == 'QuestXP' then return { db = t } end; if name == 'ZoneDB' then return { private = { areaIdToUiMapId = { [12] = 1429 } } } end end end")(xp_lua)
 ns2 = lua.table()
 for fn in ("Core.lua", "Data.lua", "UI.lua", "Main.lua"):
     loader(source(fn), fn, ns2)
 
 G = lua.globals()
-G.SlashCmdList["QUESTCHAIN"]("166")
+G.SlashCmdList["QUESTTHREAD"]("166")
 # drive the background build
 drivers = [f for f in G.stubs.values() if f._scripts["OnUpdate"] is not None]
 frames = 0
@@ -271,16 +293,16 @@ check("index finishes building", ns2.Data.state == "ready", (ns2.Data.state, ns2
 texts = [f._text for f in G.stubs.values() if f._text]
 check("window title is the quest name", any(t == "The Defias Brotherhood" for t in texts))
 check("stats line shows 8 quests", any("8 quests" in t for t in texts), [t for t in texts if "quests" in t])
-G.SlashCmdList["QUESTCHAIN"]("Morbent Fel")
+G.SlashCmdList["QUESTTHREAD"]("Morbent Fel")
 check("slash with a name resolves", any(t.startswith("Quest 55") or t == "Morbent Fel" for t in [f._text for f in G.stubs.values()]))
-G.SlashCmdList["QUESTCHAIN"]("nonexistent quest name")
+G.SlashCmdList["QUESTTHREAD"]("nonexistent quest name")
 check("unknown name shows a message", any("No quest named" in f._text for f in G.stubs.values()))
 
 # ---- current-position marker, layout, exact XP ----
 G.testClientXp[166] = 2600
 for f in G.stubs.values():
     f._text = ""
-G.SlashCmdList["QUESTCHAIN"]("166")
+G.SlashCmdList["QUESTTHREAD"]("166")
 all_texts = [f._text for f in G.stubs.values()]
 check("current quest is marked YOU ARE HERE", sum("YOU ARE HERE" in t for t in all_texts) == 1, sum("YOU ARE HERE" in t for t in all_texts))
 check("a quest in the log shows the client's exact XP, others are estimates",
@@ -294,10 +316,10 @@ for a, b in zip(rows, rows[1:]):
         ok = False
 check("rows do not overlap each other", ok and len(rows) >= 9, len(rows))
 check("item summary row is tall enough for its icon line", rows[0]._h >= 55, rows[0]._h)
-G.SlashCmdList["QUESTCHAIN"]("xpcheck")
+G.SlashCmdList["QUESTTHREAD"]("xpcheck")
 check("xpcheck: table and client agree for the test quest", any("1 of 1" in p for p in G.printed.values()), list(G.printed.values())[-2:])
 G.testClientXp[166] = 2700
-G.SlashCmdList["QUESTCHAIN"]("xpcheck")
+G.SlashCmdList["QUESTTHREAD"]("xpcheck")
 check("xpcheck reports a mismatch", any("table 2600, client 2700" in p for p in G.printed.values()))
 G.testClientXp[166] = None
 
@@ -314,7 +336,7 @@ for f in G.stubs.values():
 button = next((f for f in G.stubs.values() if f._scripts["OnClick"] is not None and f._scripts["OnDragStart"] is not None), None)
 check("quest log button is created", button is not None)
 check("quest log hook is a secure post-hook", G.hooks["QuestMapFrame_ShowQuestDetails"] is not None)
-win = frame_named("QuestChainFrame")
+win = frame_named("QuestThreadFrame")
 win._shown = False
 G.testDetail = 166
 button._scripts["OnClick"](button)
@@ -373,6 +395,76 @@ row_a.questID = None
 tick()
 check("a row that stops showing a quest hides its button", new[0]._shown is False)
 
+# ---- requirements and status (pure logic) ----
+def lt(py):
+    return lua.table_from(py, recursive=True)
+
+
+def unmet(info, done_ids, level):
+    done = lua.eval("function(set) return function(id) return set[id] == true end end")(lua.table_from({i: True for i in done_ids}))
+    names = lua.eval("function(id) return 'Q' .. id end")
+    return list(Core.Unmet(lt(info), done, level, names).values())
+
+
+check("level requirement is reported", unmet({"reqLevel": 30}, [], 20) == ["Level 30"])
+check("no unmet requirement when level is enough", unmet({"reqLevel": 30}, [], 30) == [])
+check("a prerequisite group needs all of its quests", unmet({"pre": [1, 2]}, [1], 60) == ["Finish: Q2"])
+check("alternative prerequisites need just one", unmet({"preS": [1, 2]}, [2], 60) == [])
+check("alternative prerequisites listed when none is done", unmet({"preS": [1, 2]}, [], 60) == ["Finish one of: Q1, Q2"])
+status = lambda **kw: Core.StatusOf(lt(kw.get("info", {})), kw.get("done", False), kw.get("log", False), lambda i: False, 60, lambda i: "Q")[0]
+check("status order: done, then log, then locked, then available",
+      status(done=True, log=True) == "done" and status(log=True) == "log"
+      and status(info={"pre": [9]}) == "locked" and status() == "available")
+
+# ---- partial-name search ----
+ids = lt([1, 2, 3, 4])
+names = {1: "The Defias Brotherhood", 2: "Defias", 3: "Red Silk Bandanas", 4: "Defias Gunpowder"}
+hits, total = Core.Search(ids, lua.eval("function(t) return function(id) return t[id] end end")(lua.table_from(names)), "defias", 2)
+check("search matches substrings case-insensitively, exact name first, then shorter names",
+      total == 3 and [h["id"] for h in hits.values()] == [2, 4], (total, [h["id"] for h in hits.values()]))
+check("search caps its results", len(list(hits.values())) == 2)
+check("search with nothing typed finds nothing", len(list(Core.Search(ids, lua.eval("function() return 'x' end"), "  ", 5).values())) == 0)
+
+# ---- spawn choice ----
+spawns = lt({12: [[42.5, 61.0]], 1: [[10, 10]]})
+a, x, y = Core.PickSpawn(spawns, 12)
+check("a giver's spawn in the quest's own zone is preferred", (a, x, y) == (12, 42.5, 61.0), (a, x, y))
+check("without a preferred zone the lowest area id wins", Core.PickSpawn(spawns, None)[0] == 1)
+check("no spawns means no location", Core.PickSpawn(None, 12) is None)
+
+# ---- in-window: status tags, tooltip, waypoint, search, scale ----
+G.SlashCmdList["QUESTTHREAD"]("166")
+entry_row = next((f for f in G.stubs.values() if f.questId == 166 and f.entry is not None), None)
+check("a quest row carries its entry and status", entry_row is not None and entry_row.entry.status is not None)
+tags = [f._text for f in G.stubs.values() if f._text and ("locked" in f._text or "available" in f._text)]
+check("rows show locked / available tags", len(tags) >= 2, tags[:3])
+check("rows show the quest level", any("[30]" in (f._text or "") for f in G.stubs.values()))
+G.tipLines = lua.table()
+entry_row._scripts["OnEnter"](entry_row)
+tip = list(G.tipLines.values())
+check("hover tooltip shows objective and start / end givers", any("Kill things." in s for s in tip) and any(s.startswith("Starts: Test Giver") for s in tip) and any(s.startswith("Ends: Test Giver") for s in tip), tip)
+check("tooltip place text names the zone and coordinates", any("Elwynn Forest (42, 61)" in s or "Elwynn Forest (43, 61)" in s for s in tip), tip)
+entry_row._scripts["OnClick"](entry_row, "RightButton")
+pt = G.waypointCalls.point
+check("right-click sets a waypoint at the giver on the right map", pt is not None and pt.uiMapID == 1429 and abs(pt.x - 0.425) < 1e-9 and abs(pt.y - 0.61) < 1e-9, pt)
+check("the map is opened on that zone and the waypoint is tracked", G.waypointCalls.opened == 1429 and G.waypointCalls.track is True)
+check("a waypoint message is printed", any("Waypoint set to Test Giver" in s for s in G.printed.values()))
+G.SlashCmdList["QUESTTHREAD"]("defias")
+result_rows = [f for f in G.stubs.values() if f._shown and f.questId and f.entry is None and f.name is not None and "#" in (f.name._text or "")]
+check("a partial name shows a result list", len(result_rows) >= 2, [f.name._text for f in result_rows][:3])
+picked = result_rows[0].questId
+for f in G.stubs.values():
+    f._text = ""
+result_rows[0]._scripts["OnClick"](result_rows[0], "LeftButton")
+want = quests[picked]["name"]
+check("clicking a result opens that quest's chain", any(f._text == want for f in G.stubs.values()), want)
+G.SlashCmdList["QUESTTHREAD"]("scale 1.3")
+check("scale is saved", abs(G.QuestThreadDB.scale - 1.3) < 1e-9, G.QuestThreadDB.scale)
+G.SlashCmdList["QUESTTHREAD"]("scale 9")
+check("scale is clamped", abs(G.QuestThreadDB.scale - 1.6) < 1e-9, G.QuestThreadDB.scale)
+G.SlashCmdList["QUESTTHREAD"]("reset")
+check("reset forgets position and scale", G.QuestThreadDB.scale is None and G.QuestThreadDB.pos is None)
+
 # ---- Ctrl+click on a Questie quest icon ----
 def ctrl_click(focus, ctrl=True, hold_ticks=1):
     win._shown = False
@@ -409,7 +501,7 @@ check("a row without a tag: the button keeps its default place (the row's title 
 import re
 import struct
 src = open(os.path.join(ROOT, "Main.lua"), encoding="utf-8").read()
-m = re.search(r'Interface\\\\AddOns\\\\QuestChain\\\\([A-Za-z0-9_.]+)', src)  # the Lua source holds doubled backslashes
+m = re.search(r'Interface\\\\AddOns\\\\QuestThread\\\\([A-Za-z0-9_.]+)', src)  # the Lua source holds doubled backslashes
 icon_path = os.path.join(ROOT, m.group(1)) if m else None
 check("the icon path in Main.lua points at a file in the addon", bool(icon_path) and os.path.isfile(icon_path), m and m.group(1))
 if icon_path and os.path.isfile(icon_path):
@@ -423,7 +515,7 @@ if icon_path and os.path.isfile(icon_path):
 # ---- every texture file the Lua code names exists in the addon ----
 for fn in ("Main.lua", "UI.lua"):
     text = open(os.path.join(ROOT, fn), encoding="utf-8").read()
-    for name in sorted(set(re.findall(r'Interface\\\\AddOns\\\\QuestChain\\\\([A-Za-z0-9_.]+)', text))):
+    for name in sorted(set(re.findall(r'Interface\\\\AddOns\\\\QuestThread\\\\([A-Za-z0-9_.]+)', text))):
         check("%s: addon texture %s exists" % (fn, name), os.path.isfile(os.path.join(ROOT, name)))
 
 print()

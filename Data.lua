@@ -99,7 +99,100 @@ function Data.Info(id)
     xpLevel = row and row[1],
     xpBase = row and row[2],
     rep = QuestDB.reputationReward(id),
+    level = QuestDB.questLevel(id),
+    reqLevel = QuestDB.requiredLevel(id),
+    pre = QuestDB.preQuestGroup(id),
+    preS = QuestDB.preQuestSingle(id),
+    objective = QuestDB.objectivesText(id),
   }
+end
+
+function Data.IsDone(id)
+  return C_QuestLog and C_QuestLog.IsQuestFlaggedCompleted and C_QuestLog.IsQuestFlaggedCompleted(id) and true or false
+end
+
+-- Who starts ("start") or ends ("end") a quest: { { kind = "npc"|"object", id, name }, ... }.
+function Data.Givers(id, which)
+  local t = (which == "end") and QuestDB.finishedBy(id) or QuestDB.startedBy(id)
+  local out = {}
+  if type(t) ~= "table" then return out end
+  for i, kind in ipairs({ "npc", "object" }) do
+    local db = kind == "npc" and NpcDB or ObjectDB
+    for _, gid in ipairs(t[i] or {}) do
+      out[#out + 1] = { kind = kind, id = gid, name = (db and db.name(gid)) or (kind .. " " .. gid) }
+    end
+  end
+  return out
+end
+
+-- QuestieDB's zone tables (area id -> map id), or false when it has none.
+local zones
+local function zoneTables()
+  if zones == nil then
+    local z = LibQuestieDB and LibQuestieDB.Support and LibQuestieDB.Support.Get("ZoneDB")
+    local p = type(z) == "table" and z.private or nil
+    zones = type(p) == "table" and p or false
+  end
+  return zones
+end
+
+function Data.UiMap(area)
+  local z = zoneTables()
+  if not z then return nil end
+  return (z.areaIdToUiMapIdOverride and z.areaIdToUiMapIdOverride[area]) or (z.areaIdToUiMapId and z.areaIdToUiMapId[area])
+end
+
+function Data.ZoneName(area, uiMap)
+  uiMap = uiMap or Data.UiMap(area)
+  local info = uiMap and C_Map and C_Map.GetMapInfo and C_Map.GetMapInfo(uiMap)
+  return (info and info.name) or ("Zone " .. tostring(area))
+end
+
+-- Where a quest giver stands: { area, x, y, uiMap } (x, y in 0-100), or nil when no spawn is known.
+function Data.Locate(giver, questId)
+  local db = giver.kind == "npc" and NpcDB or ObjectDB
+  local spawns = db and db.spawns and db.spawns(giver.id)
+  local zone = QuestDB.zoneOrSort and QuestDB.zoneOrSort(questId)
+  if type(zone) ~= "number" or zone <= 0 then zone = nil end
+  local area, x, y = Core.PickSpawn(spawns, zone)
+  if not area then return nil end
+  return { area = area, x = x, y = y, uiMap = Data.UiMap(area) }
+end
+
+function Data.PlaceText(place)
+  return ("%s (%.0f, %.0f)"):format(Data.ZoneName(place.area, place.uiMap), place.x, place.y)
+end
+
+-- Opens the map on the place and sets a waypoint (TomTom if installed, else the game's own).
+-- Returns true, or false and a message.
+local function setWaypoint(place, title)
+  if not (place and place.uiMap) then return false, "No map location is known for that." end
+  local m, x, y = place.uiMap, place.x / 100, place.y / 100
+  if C_Map and C_Map.OpenWorldMap then pcall(C_Map.OpenWorldMap, m) end
+  if TomTom and TomTom.AddWaypoint then
+    TomTom:AddWaypoint(m, x, y, { title = title, world = true, minimap = true })
+    return true
+  end
+  if C_Map and C_Map.SetUserWaypoint and UiMapPoint and UiMapPoint.CreateFromCoordinates then
+    if C_Map.CanSetUserWaypointOnMap and not C_Map.CanSetUserWaypointOnMap(m) then
+      return false, "A waypoint can't be placed on that map."
+    end
+    C_Map.SetUserWaypoint(UiMapPoint.CreateFromCoordinates(m, x, y))
+    if C_SuperTrack and C_SuperTrack.SetSuperTrackedUserWaypoint then C_SuperTrack.SetSuperTrackedUserWaypoint(true) end
+    return true
+  end
+  return false, "Waypoints are not available on this client."
+end
+
+function Data.Waypoint(place, title)
+  local ok, a, b = pcall(setWaypoint, place, title)
+  if not ok then return false, tostring(a) end
+  return a, b
+end
+
+-- Partial-name search over every quest: hits (best first, capped) and the total hit count.
+function Data.Search(text)
+  return Core.Search(QuestDB.GetAllIds(), QuestDB.name, text, 40)
 end
 
 function Data.Name(id) return QuestDB and QuestDB.name(id) end
@@ -168,5 +261,8 @@ function Data.Resolve(text)
   if not name then return nil end
   local ids = QuestDB.IdsByName and QuestDB.IdsByName(name)
   if ids and ids[1] then return ids[1], (#ids > 1) and (#ids .. " quests share that name; showing the first.") or nil end
-  return nil, 'No quest named "' .. name .. '" (names must match exactly; an ID or quest link also works).'
+  local hits, total = Data.Search(name)
+  if total == 1 then return hits[1].id, nil end
+  if total > 1 then return nil, ('%d quests match "%s".'):format(total, name), hits, total end
+  return nil, 'No quest named "' .. name .. '" (an ID or quest link also works).'
 end

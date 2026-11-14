@@ -143,6 +143,7 @@ function Core.Chain(idx, startId, info)
           xpBase = i.xpBase,
           rep = i.rep or {},
           items = idx.rewards[id] or {},
+          level = i.level, reqLevel = i.reqLevel, pre = i.pre, preS = i.preS, objective = i.objective,
         }
         total = total + 1
         if id == startId then current = #layers + 1 end
@@ -162,6 +163,89 @@ function Core.Chain(idx, startId, info)
     startId = startId, layers = layers, parts = #layers, quests = total,
     currentLayer = current, breadcrumbs = breadcrumbs, truncated = truncated,
   }
+end
+
+-- What still stands between the player and a quest: a list of short texts (empty = nothing).
+-- info: { reqLevel, pre = {all must be done}, preS = {at least one must be done} }.
+-- isDone(id) -> boolean; nameOf(id) -> string.
+function Core.Unmet(info, isDone, level, nameOf)
+  local out = {}
+  if info.reqLevel and info.reqLevel > 0 and level and level < info.reqLevel then
+    out[#out + 1] = "Level " .. info.reqLevel
+  end
+  if info.pre then
+    local missing = {}
+    for _, p in ipairs(info.pre) do
+      if p > 0 and not isDone(p) then missing[#missing + 1] = nameOf(p) end
+    end
+    if #missing > 0 then out[#out + 1] = "Finish: " .. table.concat(missing, ", ") end
+  end
+  if info.preS then
+    local names, any = {}, false
+    for _, p in ipairs(info.preS) do
+      if p > 0 then
+        if isDone(p) then any = true end
+        names[#names + 1] = nameOf(p)
+      end
+    end
+    if not any and #names > 0 then out[#out + 1] = "Finish one of: " .. table.concat(names, ", ") end
+  end
+  return out
+end
+
+-- "done" | "log" | "locked" | "available", plus the unmet list for locked quests.
+function Core.StatusOf(info, done, inLog, isDone, level, nameOf)
+  if done then return "done", {} end
+  if inLog then return "log", {} end
+  local unmet = Core.Unmet(info, isDone, level, nameOf)
+  if #unmet > 0 then return "locked", unmet end
+  return "available", {}
+end
+
+-- Case-insensitive substring search over quest names: ids is a list, nameOf(id) -> string or nil.
+-- Exact matches first, then shorter names, then by id. At most `limit` results.
+function Core.Search(ids, nameOf, text, limit)
+  text = tostring(text or ""):lower():match("^%s*(.-)%s*$")
+  if text == "" then return {} end
+  local hits = {}
+  for _, id in ipairs(ids) do
+    local name = nameOf(id)
+    if name then
+      local lower = name:lower()
+      if lower:find(text, 1, true) then hits[#hits + 1] = { id = id, name = name, exact = lower == text } end
+    end
+  end
+  table.sort(hits, function(a, b)
+    if a.exact ~= b.exact then return a.exact end
+    if #a.name ~= #b.name then return #a.name < #b.name end
+    return a.id < b.id
+  end)
+  local out = {}
+  for i = 1, math.min(limit or 30, #hits) do out[i] = hits[i] end
+  return out, #hits
+end
+
+-- Picks where to send the player: the first spawn, preferring the quest's own zone.
+-- spawns: { [areaId] = { {x, y}, ... } }. Returns areaId, x, y or nil.
+function Core.PickSpawn(spawns, preferredArea)
+  if type(spawns) ~= "table" then return nil end
+  local function first(area)
+    local list = spawns[area]
+    local p = list and list[1]
+    if p and p[1] and p[2] and p[1] >= 0 and p[2] >= 0 then return area, p[1], p[2] end
+  end
+  if preferredArea then
+    local a, x, y = first(preferredArea)
+    if a then return a, x, y end
+  end
+  local areas = {}
+  for area in pairs(spawns) do areas[#areas + 1] = area end
+  table.sort(areas)
+  for _, area in ipairs(areas) do
+    local a, x, y = first(area)
+    if a then return a, x, y end
+  end
+  return nil
 end
 
 -- Accepts a number, a quest link, "quest=123"/"quest:123" text, or a bare id.
