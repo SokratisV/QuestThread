@@ -1,0 +1,16 @@
+# BigWigsMods packager config. The repo root *is* the addon, so the package is
+# built from here and named "QuestChain" (the folder players extract into AddOns).
+package-as: QuestChain
+
+# No bundled libraries: no externals block and no separate "nolib" zip.
+enable-nolib-creation: no
+
+# Repo-meta and developer files that shouldn't ship inside the addon zip.
+ignore:
+  - .github
+  - .gitattributes
+  - .gitignore
+  - .pkgmeta
+  - tests
+  - tools
+  - logo.png

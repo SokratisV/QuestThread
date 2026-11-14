@@ -1,0 +1,11 @@
+# Keep repo-meta and developer files out of the packaged addon zip (git archive export-ignore).
+/.github        export-ignore
+/.gitignore     export-ignore
+/.gitattributes export-ignore
+/.pkgmeta       export-ignore
+/tests          export-ignore
+/tools          export-ignore
+
+# Textures are binary: never line-ending-convert them.
+*.tga binary
+/logo.png       export-ignore

@@ -1,0 +1,16 @@
+# OS cruft
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor/temp files
+*.bak
+*.tmp
+*~
+
+# Python caches from tests/ and tools/
+__pycache__/
+*.pyc
+
+# Dumped QuestieDB data for the offline tests (regenerate with tests/dump-questiedb.js)
+*.json
