@@ -147,7 +147,15 @@ function(quests, items)
     function m.GetFrameLevel(s) return s._lvl or 1 end
     function m.SetFrameLevel(s, l) s._lvl = l end
     function m.SetHeight(s, h) s._h = h end
-    function m.SetPoint(s, p, rel, a, x, y) s._pt = { p, rel, a, x, y } end
+    function m.EnableKeyboard(s, v) s._kb = v end
+    function m.ClearFocus(s) s._cleared = (s._cleared or 0) + 1 end
+    function m.SetTexCoord(s, a, b, c, d) s._tc = { a, b, c, d } end
+    function m.SetPoint(s, p, rel, a, x, y)
+      s._pt = { p, rel, a, x, y }
+      s._pts = s._pts or {}
+      s._pts[#s._pts + 1] = s._pt
+    end
+    function m.ClearAllPoints(s) s._pts = {} end
     function m.GetWidth() return 400 end
     function m.GetHeight() return 300 end
     function m.GetVerticalScroll() return 0 end
@@ -193,6 +201,7 @@ function(quests, items)
   _G.waypointCalls = {}
   _G.C_Map = {
     GetMapInfo = function() return { name = "Elwynn Forest" } end,
+    GetAreaInfo = function(a) return ({ [1] = "Dun Morogh", [3] = "Badlands" })[a] end,
     OpenWorldMap = function(m) waypointCalls.opened = m end,
     CanSetUserWaypointOnMap = function() return true end,
     SetUserWaypoint = function(point) waypointCalls.point = point end,
@@ -211,12 +220,14 @@ function(quests, items)
   _G.QuestMapFrame_ShowQuestDetails = function() end
   _G.hooks = {}
   _G.hooksecurefunc = function(name, fn) hooks[name] = fn end
-  _G.IsShiftKeyDown = function() return false end
+  _G.testShift, _G.testAlt = false, false
+  _G.IsShiftKeyDown = function() return testShift end
   _G.testCtrl, _G.testMouse, _G.testFocus = false, false, nil
   _G.IsControlKeyDown = function() return testCtrl end
-  _G.IsAltKeyDown = function() return false end
+  _G.IsAltKeyDown = function() return testAlt end
   _G.IsMouseButtonDown = function() return testMouse end
-  _G.GetMouseFoci = function() return { testFocus } end
+  _G.testFoci = nil
+  _G.GetMouseFoci = function() return testFoci or { testFocus } end
   _G.makeIcon = function(name, data) local f = stub(); f._name = name; f.GetName = function() return name end; f.data = data; return f end
   _G.UnitLevel = function() return 20 end
   _G.GetMaxPlayerLevel = function() return 60 end
@@ -233,6 +244,7 @@ function(quests, items)
   _G.C_Reputation = nil
   _G.GetFactionInfoByID = function(id) return "Faction" .. id end
   _G.SlashCmdList = {}
+  _G.UISpecialFrames = {}
   _G.QuestThreadDB = nil
   _G.printed = {}
   _G.print = function(...) printed[#printed + 1] = table.concat({ ... }, " ") end
@@ -250,11 +262,14 @@ function(quests, items)
     startedBy = function(id) return { { 1000 } } end,
     finishedBy = function(id) return { { 1000 } } end,
     zoneOrSort = function(id) return 12 end,
+    objectives = function(id) if id == 166 then return { { { 1000, "Giver text" } }, nil, { { 777, "Thing text" } } } end end,
     IdsByName = function(n) local l = {}; for id, q in pairs(quests) do if q.name == n then l[#l + 1] = id end end; table.sort(l); return l end,
   }
   _G.ItemDB = {
     GetAllIds = function() local l = {}; for id in pairs(items) do l[#l + 1] = id end; table.sort(l); return l end,
     questRewards = function(id) return items[id] end,
+    name = function(id) return id == 777 and "Odd Thing" or nil end,
+    npcDrops = function(id) if id == 777 then return { 1000 } end end,
   }
   _G.LibQuestieDB = { RequireContract = function() return true end, Support = { Get = function() return nil end } }
 end
@@ -304,7 +319,7 @@ for f in G.stubs.values():
     f._text = ""
 G.SlashCmdList["QUESTTHREAD"]("166")
 all_texts = [f._text for f in G.stubs.values()]
-check("current quest is marked YOU ARE HERE", sum("YOU ARE HERE" in t for t in all_texts) == 1, sum("YOU ARE HERE" in t for t in all_texts))
+check("current quest is marked 'You are here'", sum("You are here" in t for t in all_texts) == 1, sum("You are here" in t for t in all_texts))
 check("a quest in the log shows the client's exact XP, others are estimates",
       "2,600 XP" in all_texts and any(t.startswith("~") and t.endswith(" XP") for t in all_texts))
 check("stats line says the XP is for your level", any("at level 20" in t for t in all_texts))
@@ -436,8 +451,20 @@ check("no spawns means no location", Core.PickSpawn(None, 12) is None)
 G.SlashCmdList["QUESTTHREAD"]("166")
 entry_row = next((f for f in G.stubs.values() if f.questId == 166 and f.entry is not None), None)
 check("a quest row carries its entry and status", entry_row is not None and entry_row.entry.status is not None)
-tags = [f._text for f in G.stubs.values() if f._text and ("locked" in f._text or "available" in f._text)]
-check("rows show locked / available tags", len(tags) >= 2, tags[:3])
+CELL = {"done": 0, "log": 1, "available": 2, "locked": 3}
+with_entry = [f for f in G.stubs.values() if f.entry is not None and f._shown]
+bad = [(f.entry.status, f.status._tc[1] if f.status._tc is not None else None) for f in with_entry
+       if f.status._tc is None or abs(f.status._tc[1] - CELL[f.entry.status] * 0.25) > 1e-9]
+check("each row's status icon is the cell for its status", len(with_entry) >= 8 and not bad, bad[:3])
+check("the sheet cells are a quarter wide", all(abs(f.status._tc[2] - f.status._tc[1] - 0.25) < 1e-9 for f in with_entry))
+locked_rows = [f for f in with_entry if f.entry.status == "locked"]
+check("locked rows say what they need on a second line", locked_rows and all(f.sub._text.find("Needs:") >= 0 and f.sub._shown for f in locked_rows), len(locked_rows))
+plain = [f for f in with_entry if f.entry.status != "locked" and f.entry.id != 166]
+check("other rows have no second line", all(not f.sub._shown for f in plain))
+import math
+check("row height follows its second line and reward icons",
+      all(abs(f._h - (28 + (12 if f.sub._shown else 0) + (12 if f.where._shown else 0) + (math.ceil(len(f.entry["items"]) / 14) * 25 if len(f.entry["items"]) else 0))) < 0.001 for f in with_entry))
+check("rows no longer print status words in the name", not any(w in (f.name._text or "") for f in with_entry for w in ("done", "locked", "in log", "available")))
 check("rows show the quest level", any("[30]" in (f._text or "") for f in G.stubs.values()))
 G.tipLines = lua.table()
 entry_row._scripts["OnEnter"](entry_row)
@@ -446,9 +473,17 @@ check("hover tooltip shows objective and start / end givers", any("Kill things."
 check("tooltip place text names the zone and coordinates", any("Elwynn Forest (42, 61)" in s or "Elwynn Forest (43, 61)" in s for s in tip), tip)
 entry_row._scripts["OnClick"](entry_row, "RightButton")
 pt = G.waypointCalls.point
-check("right-click sets a waypoint at the giver on the right map", pt is not None and pt.uiMapID == 1429 and abs(pt.x - 0.425) < 1e-9 and abs(pt.y - 0.61) < 1e-9, pt)
+check("right-click sets a waypoint at the objective on the right map", pt is not None and pt.uiMapID == 1429 and abs(pt.x - 0.425) < 1e-9 and abs(pt.y - 0.61) < 1e-9, pt)
 check("the map is opened on that zone and the waypoint is tracked", G.waypointCalls.opened == 1429 and G.waypointCalls.track is True)
-check("a waypoint message is printed", any("Waypoint set to Test Giver" in s for s in G.printed.values()))
+check("the waypoint message names the objective", any("Waypoint set to Kill Test Giver, Elwynn Forest" in s for s in G.printed.values()), list(G.printed.values())[-2:])
+G.testShift = True
+entry_row._scripts["OnClick"](entry_row, "RightButton")
+G.testShift = False
+check("Shift+right-click goes to where the quest is handed in", list(G.printed.values())[-1].startswith("|cffffd100QuestThread:|r Waypoint set to Test Giver") or "Waypoint set to Test Giver" in list(G.printed.values())[-1], list(G.printed.values())[-1])
+G.testAlt = True
+entry_row._scripts["OnClick"](entry_row, "RightButton")
+G.testAlt = False
+check("Alt+right-click goes to where the quest starts", "Waypoint set to Test Giver" in list(G.printed.values())[-1], list(G.printed.values())[-1])
 G.SlashCmdList["QUESTTHREAD"]("defias")
 result_rows = [f for f in G.stubs.values() if f._shown and f.questId and f.entry is None and f.name is not None and "#" in (f.name._text or "")]
 check("a partial name shows a result list", len(result_rows) >= 2, [f.name._text for f in result_rows][:3])
@@ -464,6 +499,112 @@ G.SlashCmdList["QUESTTHREAD"]("scale 9")
 check("scale is clamped", abs(G.QuestThreadDB.scale - 1.6) < 1e-9, G.QuestThreadDB.scale)
 G.SlashCmdList["QUESTTHREAD"]("reset")
 check("reset forgets position and scale", G.QuestThreadDB.scale is None and G.QuestThreadDB.pos is None)
+
+# ---- keyboard: the window must not eat movement keys ----
+kwin = frame_named("QuestThreadFrame")
+kwin._shown = True
+check("the window never takes keyboard input, so it cannot swallow WASD in combat", kwin._kb is not True and kwin._scripts["OnKeyDown"] is None and kwin._scripts["OnKeyUp"] is None)
+check("Escape closes it through the game's special-frame list", "QuestThreadFrame" in list(G.UISpecialFrames.values()))
+cleared = kwin.box._cleared or 0
+kwin._scripts["OnMouseDown"](kwin, "LeftButton")
+check("clicking the window takes focus off the search box", (kwin.box._cleared or 0) == cleared + 1)
+cleared = kwin.box._cleared or 0
+kwin._scripts["OnEvent"](kwin, "PLAYER_REGEN_DISABLED")
+check("the search box lets go of the keyboard when combat starts", (kwin.box._cleared or 0) == cleared + 1)
+
+# ---- where a quest's objectives happen ----
+def lookups():
+    return lua.eval("""
+      {
+        npcName = function(n) return ({ [1] = "Boar", [2] = "Wolf", [3] = "Bandit" })[n] end,
+        npcSpawns = function(n) return ({ [1] = { [10] = { {1,1}, {2,2}, {3,3} }, [20] = { {1,1} } }, [2] = { [20] = { {1,1}, {2,2} } },
+                                          [3] = { [30] = { {1,1} } } })[n] end,
+        objName = function(o) return ({ [9] = "Chest" })[o] end,
+        objSpawns = function(o) return ({ [9] = { [40] = { {1,1} } } })[o] end,
+        itemName = function(i) return ({ [5] = "Fang" })[i] end,
+        npcDrops = function(i) if i == 5 then return { 1, 2 } end end,
+        objDrops = function(i) return nil end,
+      }""")
+
+
+raw = lua.eval("{ { { 1, 'x' } }, { { 9, 'y' } }, { { 5, 'z' } } }")
+trigger = lua.eval("{ 'Reach the camp', { [50] = { {1,1} } } }")
+got = list(Core.Objectives(raw, trigger, lookups()).values())
+check("objectives: a kill lists the zones its spawns are in, most spawn points first", got[0]["kind"] == "kill" and got[0]["name"] == "Boar" and list(got[0]["areas"].values()) == [10, 20], (got[0]["name"], list(got[0]["areas"].values())))
+check("objectives: an object lists its zone", got[1]["kind"] == "object" and list(got[1]["areas"].values()) == [40])
+check("objectives: an item lists the zones and names of what drops it", got[2]["kind"] == "item" and got[2]["name"] == "Fang" and list(got[2]["areas"].values()) == [10, 20] and list(got[2]["from"].values()) == ["Boar", "Wolf"], (list(got[2]["areas"].values()), list(got[2]["from"].values())))
+check("objectives: an explore trigger lists its zone", got[3]["kind"] == "explore" and got[3]["name"] == "Reach the camp" and list(got[3]["areas"].values()) == [50])
+credit = list(Core.Objectives(lua.eval("{ nil, nil, nil, nil, { { { 1, 3 }, 3, 'Bandits' } } }"), None, lookups()).values())
+check("objectives: a kill-credit objective covers every npc that counts", len(credit) == 1 and credit[0]["name"] == "Bandit" and sorted(credit[0]["areas"].values()) == [10, 20, 30], credit)
+check("objectives: nothing recorded gives an empty list", len(list(Core.Objectives(None, None, lookups()).values())) == 0)
+top, total = Core.TopAreas(Core.Objectives(raw, trigger, lookups()), 3)
+check("top areas: the zones shared by several objectives come first, and the rest are counted", list(top.values()) == [10, 20, 40] and total == 4, (list(top.values()), total))
+
+boar = Core.Objectives(lua.eval("{ { { 1, 'x' } } }"), None, lookups())
+a, x, y, o = Core.BestSpot(boar, None)
+check("best spot: the point nearest the middle of the biggest crowd", (a, x, y) == (10, 2, 2) and o["name"] == "Boar", (a, x, y))
+a2, x2, y2, _ = Core.BestSpot(boar, lua.eval("function(area) return area ~= 10 end"))
+check("best spot skips areas that cannot be shown on a map", (a2, x2, y2) == (20, 1, 1), (a2, x2, y2))
+check("best spot with no objectives is nil", Core.BestSpot(lua.table(), None) is None)
+
+G.SlashCmdList["QUESTTHREAD"]("166")
+wrows = [f for f in G.stubs.values() if f._shown and f.entry is not None and f.entry.id == 166]
+check("a chain row shows the zones of its objectives", wrows and wrows[0].where._shown and "Elwynn Forest" in wrows[0].where._text, wrows[0].where._text if wrows else None)
+other = [f for f in G.stubs.values() if f._shown and f.entry is not None and f.entry.id != 166]
+check("a quest with no objectives shows where it is handed in", other and all(f.where._shown and f.where._text.find("Hand in: ") >= 0 for f in other), [f.where._text for f in other][:2])
+G.tipLines = lua.table()
+wrows[0]._scripts["OnEnter"](wrows[0])
+tip = list(G.tipLines.values())
+check("the tooltip lists each objective with its zones", any(l.startswith("Kill Test Giver") and "Elwynn Forest" in l for l in tip), tip)
+check("the tooltip says what drops a collected item", any(l.startswith("Collect Odd Thing (from Test Giver") for l in tip), tip)
+
+check("zone names come from the area itself", ns2.Data.ZoneName(1) == "Dun Morogh" and ns2.Data.ZoneName(3) == "Badlands", (ns2.Data.ZoneName(1), ns2.Data.ZoneName(3)))
+check("an area the game has no name for falls back to its map's name", ns2.Data.ZoneName(12) == "Elwynn Forest")
+check("an area with no name anywhere shows its id", ns2.Data.ZoneName(51) == "Zone 51")
+# ---- reused rows keep the right layout; Back returns to the list ----
+G.SlashCmdList["QUESTTHREAD"]("defias")          # result rows move each row's name
+G.SlashCmdList["QUESTTHREAD"]("166")             # ...then a chain reuses those rows
+chain_rows = [f for f in G.stubs.values() if f._shown and f.entry is not None]
+bad = [(len(f.name._pts), f.name._pts[1][2]) for f in chain_rows if len(f.name._pts) != 1 or f.name._pts[1][2] != 46]
+check("chain rows put the quest name back after a search list reused them", len(chain_rows) >= 8 and not bad, bad[:3])
+kwin = G.QuestThreadFrame if False else next(f for f in G.stubs.values() if f._name == "QuestThreadFrame")
+loose = [f.name._text for f in G.stubs.values() if f._shown and f.entry is None and f.questId is None and f.name is not None and f.name._text
+         and not f.name._text.startswith("Item rewards")]
+check("rows without a quest (reputation, breadcrumbs) carry no old name text", not loose, loose[:3])
+check("no Back button when the chain was not picked from a list", kwin.back._shown is False)
+G.SlashCmdList["QUESTTHREAD"]("defias")
+pick = [f for f in G.stubs.values() if f._shown and f.questId and f.entry is None and f.name is not None and "#" in (f.name._text or "")][0]
+pick._scripts["OnClick"](pick, "LeftButton")
+check("picking from a list shows a Back button", kwin.back._shown is True)
+G.SlashCmdList["QUESTTHREAD"]("")
+kwin.back._scripts["OnClick"](kwin.back)
+back_rows = [f for f in G.stubs.values() if f._shown and f.questId and f.entry is None and f.name is not None and "#" in (f.name._text or "")]
+check("Back returns to the same list", len(back_rows) >= 2 and kwin.back._shown is False, len(back_rows))
+pick = back_rows[0]
+pick._scripts["OnClick"](pick, "LeftButton")
+chain_row = next(f for f in G.stubs.values() if f._shown and f.entry is not None and f.questId != pick.questId)
+chain_row._scripts["OnClick"](chain_row, "LeftButton")
+check("Back is still there after moving around inside the chain", kwin.back._shown is True)
+G.SlashCmdList["QUESTTHREAD"]("166")
+check("opening a quest another way clears Back", kwin.back._shown is False)
+
+# ---- Ctrl+click on a reward item opens the dressing room ----
+G.dressed = lua.table()
+G.DressUpItemLink = lua.eval("function(link) dressed[#dressed + 1] = link; return true end")
+G.SlashCmdList["QUESTTHREAD"]("166")
+item_btns = [f for f in G.stubs.values() if f.itemId is not None and f._shown]
+check("reward icons exist to click", len(item_btns) > 0)
+if item_btns:
+    b = item_btns[0]
+    G.testCtrl = False
+    b._scripts["OnClick"](b, "LeftButton")
+    check("a plain click on a reward item does nothing", len(list(G.dressed.values())) == 0)
+    G.testCtrl = True
+    b._scripts["OnClick"](b, "LeftButton")
+    G.testCtrl = False
+    got = list(G.dressed.values())
+    check("Ctrl+click on a reward item opens the dressing room on it", got == ["item:%d" % b.itemId], got)
+G.DressUpItemLink = None
 
 # ---- Ctrl+click on a Questie quest icon ----
 def ctrl_click(focus, ctrl=True, hold_ticks=1):
@@ -482,6 +623,35 @@ check("plain click on the icon does nothing", not ctrl_click(quest_icon, ctrl=Fa
 check("Ctrl+click on a non-quest Questie icon does nothing", not ctrl_click(G.makeIcon("QuestieFrame13", lua.table_from({"Id": 55}))))
 check("Ctrl+click on some other frame does nothing", not ctrl_click(G.makeIcon("SomeOtherFrame", lua.table_from({"Id": 55, "QuestData": lua.table_from({"Id": 55})}))))
 check("Ctrl+click on empty space does nothing", not ctrl_click(None))
+# stacked icons: every quest behind the cursor is offered
+G.testFoci = lua.table_from([G.makeIcon("QuestieFrame20", lua.table_from({"Id": 55, "QuestData": lua.table_from({"Id": 55})})),
+                             G.makeIcon("QuestieFrame21", lua.table_from({"Id": 166, "QuestData": lua.table_from({"Id": 166})})),
+                             G.makeIcon("QuestieFrame22", lua.table_from({"Id": 55, "QuestData": lua.table_from({"Id": 55})}))])
+for f in G.stubs.values():
+    f._text = ""
+opened = ctrl_click(None)
+rows_shown = [f for f in G.stubs.values() if f._shown and f.questId and f.entry is None and f.name is not None and "#" in (f.name._text or "")]
+shown_ids = sorted(f.questId for f in rows_shown)
+check("Ctrl+click on stacked icons lists each quest once to pick from", opened and shown_ids == [55, 166], shown_ids)
+check("the list says how many quests share the icon", any("2 quests share that icon" in (f._text or "") for f in G.stubs.values()))
+G.testFoci = None
+# one icon whose Questie tooltip lists several quests
+single = G.makeIcon("QuestieFrame30", lua.table_from({"Id": 55, "QuestData": lua.table_from({"Id": 55})}))
+G.GameTooltip.IsShown = lua.eval("function() return true end")
+G.GameTooltip._owner = single
+G.GameTooltip.npcAndObjectOrder = lua.table_from({"Giver": lua.table_from({"a": lua.table_from({"questId": 166}), "b": lua.table_from({"questId": 55}), "c": lua.table_from({"title": "no id"})})})
+G.GameTooltip.questOrder = lua.table_from({55: lua.table_from([])})
+for f in G.stubs.values():
+    f._text = ""
+opened = ctrl_click(single)
+rows_shown = [f for f in G.stubs.values() if f._shown and f.questId and f.entry is None and f.name is not None and "#" in (f.name._text or "")]
+check("Ctrl+click on one icon lists every quest in Questie's tooltip", opened and sorted(f.questId for f in rows_shown) == [55, 166], sorted(f.questId for f in rows_shown))
+G.GameTooltip._owner = G.makeIcon("QuestieFrame31", lua.table_from({"Id": 99}))
+opened = ctrl_click(single)
+check("a tooltip owned by another icon is ignored", opened and not [f for f in G.stubs.values() if f._shown and f.entry is None and f.questId == 166 and "#" in ((f.name._text if f.name is not None else "") or "")])
+G.GameTooltip.IsShown = lua.eval("function() return false end")
+G.GameTooltip.npcAndObjectOrder = None
+G.GameTooltip.questOrder = None
 G.testCtrl, G.testFocus, G.testMouse = True, quest_icon, True
 tick(); win._shown = False; tick()
 check("holding the click down opens it once, not every frame", not win._shown)

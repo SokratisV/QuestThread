@@ -221,12 +221,10 @@ end
 -- Questie's icons are its own frames (QuestieFrame<N>); nothing is hooked on them. While Ctrl is held
 -- a tiny per-frame check sees a fresh left click and, if the mouse is over a Questie quest icon,
 -- opens that quest's chain. (Questie itself only uses Ctrl+click for a TomTom waypoint.)
-local function MouseFocusFrame()
-  if GetMouseFoci then
-    local list = GetMouseFoci()
-    return list and list[1]
-  end
-  return GetMouseFocus and GetMouseFocus() or nil
+local function MouseFoci()
+  if GetMouseFoci then return GetMouseFoci() or {} end
+  local f = GetMouseFocus and GetMouseFocus()
+  return f and { f } or {}
 end
 
 local function QuestieIconQuest(frame)
@@ -238,6 +236,25 @@ local function QuestieIconQuest(frame)
   return nil
 end
 
+-- Questie lists every quest around an icon in its hover tooltip and keeps that list on GameTooltip
+-- (npcAndObjectOrder: giver -> quest, with each quest's questId). Read it, never change it.
+local function TooltipQuests(icons, add)
+  local tip = GameTooltip
+  if not tip or not tip.IsShown or not tip:IsShown() then return end
+  local owner = tip._owner
+  local hovered = false
+  for _, f in ipairs(icons) do if f == owner then hovered = true end end
+  if not hovered then return end
+  for _, quests in pairs(tip.npcAndObjectOrder or {}) do
+    for _, q in pairs(quests) do
+      if type(q) == "table" and type(q.questId) == "number" then add(q.questId) end
+    end
+  end
+  for id in pairs(tip.questOrder or {}) do
+    if type(id) == "number" then add(id) end
+  end
+end
+
 local iconWatcher, wasDown = nil, false
 local function StartIconWatch()
   if iconWatcher then return end
@@ -245,8 +262,21 @@ local function StartIconWatch()
   iconWatcher:SetScript("OnUpdate", function()
     local down = IsControlKeyDown() and not IsShiftKeyDown() and not IsAltKeyDown() and IsMouseButtonDown("LeftButton")
     if down and not wasDown then
-      local ok, id = pcall(function() return QuestieIconQuest(MouseFocusFrame()) end)
-      if ok and id then UI.Open(id) end
+      -- Every Questie icon under the cursor: stacked icons mean several quests share the spot.
+      local ok, ids = pcall(function()
+        local list, seen = {}, {}
+        local function add(id)
+          if not seen[id] then seen[id] = true; list[#list + 1] = id end
+        end
+        local foci, icons = MouseFoci(), {}
+        for _, f in ipairs(foci) do
+          local id = QuestieIconQuest(f)
+          if id then icons[#icons + 1] = f; add(id) end
+        end
+        if #icons > 0 then TooltipQuests(icons, add) end
+        return list
+      end)
+      if ok and #ids > 0 then UI.OpenIds(ids) end
     end
     wasDown = down and true or false
   end)

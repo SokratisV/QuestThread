@@ -25,13 +25,17 @@ Built for **WoW Forever** (client interface 16001).
 While the window is open it follows whichever quest you open in the quest log. Escape closes it.
 
 ## What the window shows
-- The chain as numbered steps (quests on a branch share a step number), each with its level and a status:
-  **done**, **in log**, **available** (you can pick it up now) or **locked**. **YOU ARE HERE** marks your quest.
+- The chain as numbered steps (quests on a branch share a step number), each with its level and a status icon:
+  a green check (done), a blue "?" (in your log), a gold "!" (available now) or a red lock (locked). Locked quests say what they need on a second line, and your own quest is highlighted and marked "You are here".
+- Under each step, in blue, **where it happens**: the zones where its kill targets, objects and item drops
+  are found (or where it is handed in, if it has no such objective). The tooltip spells it out per objective,
+  for example "Kill Mosshoof Courser, Dustwallow Marsh" or "Collect Soothing Spices (from Jarl, ...)".
 - **Hover a step** for its objective, what locks it (a level or the quests you still need), and who starts
   and ends it with the zone and coordinates.
-- **Right-click a step** to open the map and set a waypoint to where it starts (to where it ends once the
-  quest is in your log); **Shift+right-click** always goes to the end. Uses TomTom if you have it, otherwise
-  the game's own waypoint.
+- **Right-click a step** to open the map and set a waypoint where its objectives are: the middle of the crowd
+  of spawns in its main zone for a kill, a collected item (where it drops) or an object. A step with no known
+  objective goes to its quest giver. **Shift+right-click** goes to where the quest is handed in and
+  **Alt+right-click** to where it starts. Uses TomTom if you have it, otherwise the game's own waypoint.
 - XP per quest and for the chain, reputation totals, and every reward item (hover for its tooltip).
 - **Show remaining** totals only what you haven't finished.
 - Breadcrumb quests that can also lead into the chain are listed separately.
@@ -66,7 +70,7 @@ While the window is open it follows whichever quest you open in the quest log. E
     python -I tests/run.py data.json --mutate   # must report failures (proves the tests can fail)
 Needs `lupa` (`lupa.lua51`, real Lua 5.1). The tests cover the chain/XP/status logic and a stub-frame run of
 the UI; they do not exercise the real WoW API. `tools/make-chain-icon.py` redraws `Chain.tga`;
-`tools/make-logo.py` redraws `logo.png` (the CurseForge avatar).
+`tools/make-status-icons.py` redraws `Status.tga`; `tools/make-logo.py` redraws `logo.png` (the CurseForge avatar).
 
 ## License & credits
 MIT, see `LICENSE`. Data: QuestieDB. `Thin.tga` (window border) and the window's look are from

@@ -260,4 +260,145 @@ function Core.ParseRef(text)
   return nil, text
 end
 
+-- ---- where a quest's objectives happen ----
+-- Spawn tables are { [areaId] = { {x, y}, ... } }; an area's weight is how many spawn points it has.
+-- `spots`, when given, also collects the points themselves: { [area] = { {x, y}, ... } }.
+local function AddSpawns(areas, spawns, spots)
+  if type(spawns) ~= "table" then return end
+  for area, pts in pairs(spawns) do
+    if type(area) == "number" and area > 0 and type(pts) == "table" then
+      areas[area] = (areas[area] or 0) + math.max(1, #pts)
+      if spots then
+        local list = spots[area]
+        if not list then list = {}; spots[area] = list end
+        for _, p in ipairs(pts) do list[#list + 1] = p end
+      end
+    end
+  end
+end
+
+-- { [area] = weight } -> area ids, most spawn points first.
+local function SortedAreas(areas)
+  local list = {}
+  for area, w in pairs(areas) do list[#list + 1] = { area = area, w = w } end
+  table.sort(list, function(a, b) if a.w ~= b.w then return a.w > b.w end return a.area < b.area end)
+  local out = {}
+  for i, a in ipairs(list) do out[i] = a.area end
+  return out
+end
+
+local function Weight(spawns)
+  local mine = {}
+  AddSpawns(mine, spawns)
+  local w = 0
+  for _, v in pairs(mine) do w = w + v end
+  return w
+end
+
+local MAX_DROPPERS = 40
+
+-- raw: QuestDB.objectives(id) = { creatures, objects, items, reputation, killCredit, spell }.
+-- trigger: QuestDB.triggerEnd(id) = { text, spawnList } (an "explore" objective), or nil.
+-- L: { npcName, npcSpawns, objName, objSpawns, itemName, npcDrops, objDrops } lookups by id.
+-- Returns a list of { kind = "kill"|"object"|"item"|"explore", name, areas = {area ids}, from = {dropper names} }.
+function Core.Objectives(raw, trigger, L)
+  local out = {}
+  if type(raw) == "table" then
+    for _, c in ipairs(raw[1] or {}) do
+      local areas, spots = {}, {}
+      AddSpawns(areas, L.npcSpawns(c[1]), spots)
+      out[#out + 1] = { kind = "kill", name = L.npcName(c[1]) or c[2] or ("NPC " .. tostring(c[1])), areas = SortedAreas(areas), spots = spots }
+    end
+    for _, c in ipairs(raw[5] or {}) do
+      local areas, spots = {}, {}
+      for _, npc in ipairs(c[1] or {}) do AddSpawns(areas, L.npcSpawns(npc), spots) end
+      out[#out + 1] = { kind = "kill", name = L.npcName(c[2]) or c[3] or ("NPC " .. tostring(c[2])), areas = SortedAreas(areas), spots = spots }
+    end
+    for _, c in ipairs(raw[2] or {}) do
+      local areas, spots = {}, {}
+      AddSpawns(areas, L.objSpawns(c[1]), spots)
+      out[#out + 1] = { kind = "object", name = L.objName(c[1]) or c[2] or ("Object " .. tostring(c[1])), areas = SortedAreas(areas), spots = spots }
+    end
+    for _, c in ipairs(raw[3] or {}) do
+      local areas, droppers, spots = {}, {}, {}
+      for i, npc in ipairs(L.npcDrops(c[1]) or {}) do
+        if i > MAX_DROPPERS then break end
+        local sp = L.npcSpawns(npc)
+        AddSpawns(areas, sp, spots)
+        droppers[#droppers + 1] = { name = L.npcName(npc), w = Weight(sp) }
+      end
+      for i, obj in ipairs(L.objDrops(c[1]) or {}) do
+        if i > MAX_DROPPERS then break end
+        local sp = L.objSpawns(obj)
+        AddSpawns(areas, sp, spots)
+        droppers[#droppers + 1] = { name = L.objName(obj), w = Weight(sp) }
+      end
+      table.sort(droppers, function(a, b) return a.w > b.w end)
+      local from = {}
+      for _, d in ipairs(droppers) do
+        if d.name and #from < 3 then from[#from + 1] = d.name end
+      end
+      out[#out + 1] = { kind = "item", name = L.itemName(c[1]) or c[2] or ("Item " .. tostring(c[1])), areas = SortedAreas(areas), spots = spots, from = from, sources = #droppers }
+    end
+  end
+  if type(trigger) == "table" and type(trigger[2]) == "table" then
+    local areas, spots = {}, {}
+    AddSpawns(areas, trigger[2], spots)
+    out[#out + 1] = { kind = "explore", name = trigger[1] or "Explore", areas = SortedAreas(areas), spots = spots }
+  end
+  return out
+end
+
+-- The areas across several objectives: an area scores 3, 2, 1 for being an objective's first, second
+-- or third area, and the highest scores come first. Returns at most `limit` areas and how many there are in all.
+function Core.TopAreas(objs, limit)
+  local score, first, n = {}, {}, 0
+  for _, o in ipairs(objs) do
+    for rank, area in ipairs(o.areas) do
+      if rank <= 3 then
+        score[area] = (score[area] or 0) + (4 - rank)
+        if not first[area] then n = n + 1; first[area] = n end
+      end
+    end
+  end
+  local list = {}
+  for area in pairs(score) do list[#list + 1] = area end
+  table.sort(list, function(a, b) if score[a] ~= score[b] then return score[a] > score[b] end return first[a] < first[b] end)
+  local out = {}
+  for i = 1, math.min(limit or 3, #list) do out[i] = list[i] end
+  return out, #list
+end
+
+-- Where to send the player for a quest's objectives: the best-ranked area that `canUse(area)` accepts,
+-- and in it the point of the first objective there that is closest to the middle of that objective's points
+-- (so the mark lands inside the crowd of spawns, not at an edge). Returns area, x, y, objective, or nil.
+function Core.BestSpot(objs, canUse)
+  local areas = Core.TopAreas(objs, 99)
+  for _, area in ipairs(areas) do
+    if not canUse or canUse(area) then
+      for _, o in ipairs(objs) do
+        local pts = o.spots and o.spots[area]
+        if pts then
+          local sx, sy, n = 0, 0, 0
+          for _, p in ipairs(pts) do
+            if p[1] and p[2] then sx = sx + p[1]; sy = sy + p[2]; n = n + 1 end
+          end
+          if n > 0 then
+            local cx, cy = sx / n, sy / n
+            local best, bd
+            for _, p in ipairs(pts) do
+              if p[1] and p[2] then
+                local d = (p[1] - cx) ^ 2 + (p[2] - cy) ^ 2
+                if not bd or d < bd then best, bd = p, d end
+              end
+            end
+            return area, best[1], best[2], o
+          end
+        end
+      end
+    end
+  end
+  return nil
+end
+
 return Core

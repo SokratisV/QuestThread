@@ -142,10 +142,20 @@ function Data.UiMap(area)
   return (z.areaIdToUiMapIdOverride and z.areaIdToUiMapIdOverride[area]) or (z.areaIdToUiMapId and z.areaIdToUiMapId[area])
 end
 
+-- The area's own name first (works for any area id), then the name of the map it belongs to.
+local zoneNames = {}
 function Data.ZoneName(area, uiMap)
-  uiMap = uiMap or Data.UiMap(area)
-  local info = uiMap and C_Map and C_Map.GetMapInfo and C_Map.GetMapInfo(uiMap)
-  return (info and info.name) or ("Zone " .. tostring(area))
+  local hit = zoneNames[area]
+  if hit then return hit end
+  local name = C_Map and C_Map.GetAreaInfo and C_Map.GetAreaInfo(area)
+  if type(name) ~= "string" or name == "" then
+    uiMap = uiMap or Data.UiMap(area)
+    local info = uiMap and C_Map and C_Map.GetMapInfo and C_Map.GetMapInfo(uiMap)
+    name = info and info.name
+  end
+  if type(name) ~= "string" or name == "" then return "Zone " .. tostring(area) end -- not cached: names may load later
+  zoneNames[area] = name
+  return name
 end
 
 -- Where a quest giver stands: { area, x, y, uiMap } (x, y in 0-100), or nil when no spawn is known.
@@ -191,6 +201,39 @@ function Data.Waypoint(place, title)
 end
 
 -- Partial-name search over every quest: hits (best first, capped) and the total hit count.
+-- Where a quest's objectives happen: { objs = Core.Objectives(...), zones = {area ids}, extra = n more areas }.
+-- Cached, since a chain asks for every quest on each redraw.
+local whereCache = {}
+function Data.Where(id)
+  local hit = whereCache[id]
+  if hit then return hit end
+  local lookups = {
+    npcName = function(n) return NpcDB and NpcDB.name(n) end,
+    npcSpawns = function(n) return NpcDB and NpcDB.spawns and NpcDB.spawns(n) end,
+    objName = function(o) return ObjectDB and ObjectDB.name(o) end,
+    objSpawns = function(o) return ObjectDB and ObjectDB.spawns and ObjectDB.spawns(o) end,
+    itemName = function(i) return ItemDB and ItemDB.name and ItemDB.name(i) end,
+    npcDrops = function(i) return ItemDB and ItemDB.npcDrops and ItemDB.npcDrops(i) end,
+    objDrops = function(i) return ItemDB and ItemDB.objectDrops and ItemDB.objectDrops(i) end,
+  }
+  local ok, objs = pcall(function()
+    return Core.Objectives(QuestDB.objectives and QuestDB.objectives(id), QuestDB.triggerEnd and QuestDB.triggerEnd(id), lookups)
+  end)
+  if not ok then objs = {} end
+  local zones, total = Core.TopAreas(objs, 3)
+  hit = { objs = objs, zones = zones, extra = total - #zones }
+  whereCache[id] = hit
+  return hit
+end
+
+-- Where a quest's objectives are, as a place for a waypoint: { area, x, y, uiMap, objective }, or nil.
+function Data.ObjectivePlace(id)
+  local w = Data.Where(id)
+  local area, x, y, obj = Core.BestSpot(w.objs, function(a) return Data.UiMap(a) ~= nil end)
+  if not area then return nil end
+  return { area = area, x = x, y = y, uiMap = Data.UiMap(area), objective = obj }
+end
+
 function Data.Search(text)
   return Core.Search(QuestDB.GetAllIds(), QuestDB.name, text, 40)
 end

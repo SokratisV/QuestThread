@@ -9,6 +9,9 @@ local WIDTH, HEIGHT = 470, 580
 local CONTENT_W = WIDTH - 48
 local ICON = 22
 local FLAT = "Interface\\Buttons\\WHITE8X8"
+-- Step status icons: four 32x32 cells in one sheet (tools/make-status-icons.py).
+local STATUS_TEX = "Interface\\AddOns\\QuestThread\\Status.tga"
+local STATUS_CELL = { done = 0, log = 1, available = 2, locked = 3 }
 
 -- Look and colours follow FlareUI's windows: a dark panel, a thin bronze edge (FlareUI's own
 -- Thin.tga border, MIT-licensed, copied here), Blizzard-yellow titles, and Blizzard's grey dropdown
@@ -26,7 +29,8 @@ end
 
 local frame, content, scroll
 local rows, iconPool = {}, {}
-local current, showRemaining, notice, results
+local current, showRemaining, notice, results, backTo
+local Render -- defined below; the row click handlers need it
 
 local function Say(msg) print("|cffffd100QuestThread:|r " .. msg) end
 
@@ -108,7 +112,14 @@ local function GetIconButton(parent)
     if not self.itemId then return end
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
     GameTooltip:SetHyperlink("item:" .. self.itemId)
+    GameTooltip:AddLine("|cff8fc4ffCtrl+click: preview in the dressing room|r")
     GameTooltip:Show()
+  end)
+  -- Ctrl+click opens the game's dressing room on the item, same as for any item link.
+  b:SetScript("OnClick", function(self)
+    if not self.itemId or not IsControlKeyDown() then return end
+    local dress = DressUpItemLink or DressUpLink
+    if dress then pcall(dress, "item:" .. self.itemId) end
   end)
   b:SetScript("OnLeave", function(self)
     self.rim:SetVertexColor(BRONZE[1], BRONZE[2], BRONZE[3], 1)
@@ -149,6 +160,29 @@ local STATUS_TEXT = {
   available = { "Available now", 0.4, 1, 0.4 }, locked = { "Locked", 1, 0.4, 0.4 },
 }
 
+local KIND_VERB = { kill = "Kill", object = "Use", item = "Collect", explore = "Go to" }
+
+local function ZoneList(areas, max)
+  local names = {}
+  for i = 1, math.min(max, #areas) do names[#names + 1] = Data.ZoneName(areas[i]) end
+  if #areas > max then names[#names + 1] = "+" .. (#areas - max) end
+  return table.concat(names, ", ")
+end
+
+-- The blue "where" line of a chain row, or nil when nothing is known.
+local function WhereText(e)
+  local w = Data.Where(e.id)
+  if #w.zones > 0 then
+    local names = {}
+    for _, area in ipairs(w.zones) do names[#names + 1] = Data.ZoneName(area) end
+    return "|cff8fb4c8" .. table.concat(names, ", ") .. (w.extra > 0 and (" +" .. w.extra) or "") .. "|r"
+  end
+  local g = Data.Givers(e.id, "end")[1]
+  local place = g and Data.Locate(g, e.id)
+  if place then return "|cff8fb4c8Hand in: " .. Data.ZoneName(place.area, place.uiMap) .. "|r" end
+  return nil
+end
+
 local function ShowQuestTip(row)
   local e = row.entry
   if not e then return end
@@ -164,6 +198,19 @@ local function ShowQuestTip(row)
     GameTooltip:AddLine(" ")
     for _, line in ipairs(e.objective) do GameTooltip:AddLine(line, 1, 1, 1, true) end
   end
+  local where = Data.Where(e.id)
+  if #where.objs > 0 then
+    GameTooltip:AddLine(" ")
+    for i, o in ipairs(where.objs) do
+      if i > 6 then GameTooltip:AddLine("…", 0.7, 0.85, 1); break end
+      local line = KIND_VERB[o.kind] .. " " .. o.name
+      if o.kind == "item" and #o.from > 0 then
+        line = line .. " (from " .. table.concat(o.from, ", ") .. (o.sources > #o.from and " and others" or "") .. ")"
+      end
+      if #o.areas > 0 then line = line .. " — " .. ZoneList(o.areas, 3) end
+      GameTooltip:AddLine(line, 0.7, 0.85, 1, true)
+    end
+  end
   for _, which in ipairs({ "start", "end" }) do
     local givers = Data.Givers(e.id, which)
     for i = 1, math.min(2, #givers) do
@@ -174,15 +221,28 @@ local function ShowQuestTip(row)
   end
   GameTooltip:AddLine(" ")
   GameTooltip:AddLine("Left-click: open this quest's chain", 0.6, 0.6, 0.6)
-  GameTooltip:AddLine("Right-click: waypoint to the start (the end once it is in your log)", 0.6, 0.6, 0.6, true)
-  GameTooltip:AddLine("Shift+Right-click: waypoint to the end", 0.6, 0.6, 0.6)
+  GameTooltip:AddLine("Right-click: waypoint to where the objectives are", 0.6, 0.6, 0.6, true)
+  GameTooltip:AddLine("Shift+Right-click: to where it is handed in · Alt+Right-click: to where it starts", 0.6, 0.6, 0.6, true)
   GameTooltip:Show()
 end
 
-local function WaypointFor(row, wantEnd)
+
+-- mode: nil = where the objectives are (the quest's giver when none is known), "end" = where it is handed in,
+-- "start" = where it is picked up.
+local function WaypointFor(row, mode)
   local e = row.entry
   if not e then return end
-  local which = (wantEnd or e.status == "log") and "end" or "start"
+  if not mode then
+    local place = Data.ObjectivePlace(e.id)
+    if place then
+      local o = place.objective
+      local title = KIND_VERB[o.kind] .. " " .. o.name
+      local ok, msg = Data.Waypoint(place, title)
+      if ok then Say(("Waypoint set to %s, %s."):format(title, Data.PlaceText(place))) else Say(msg or "Could not set a waypoint.") end
+      return
+    end
+  end
+  local which = (mode == "end" or (not mode and e.status == "log")) and "end" or "start"
   local givers = Data.Givers(e.id, which)
   if #givers == 0 then Say("No " .. which .. " location is known for that quest."); return end
   for _, g in ipairs(givers) do
@@ -209,9 +269,20 @@ local function GetRow(i)
   row.line = Solid(row, "BORDER", BRONZE_MUTED[1], BRONZE_MUTED[2], BRONZE_MUTED[3], 0.3)
   row.line:SetPoint("TOPLEFT"); row.line:SetPoint("TOPRIGHT"); row.line:SetHeight(1)
   row.num = Text(row, "GameFontNormalSmall", "RIGHT")
-  row.num:SetPoint("TOPLEFT", 0, -5); row.num:SetWidth(22)
+  row.num:SetPoint("TOPLEFT", 2, -6); row.num:SetWidth(18)
+  row.status = row:CreateTexture(nil, "ARTWORK")
+  row.status:SetTexture(STATUS_TEX)
+  row.status:SetSize(16, 16)
+  row.status:SetPoint("TOPLEFT", 24, -5)
+  row.status:Hide()
   row.name = Text(row, "GameFontHighlight")
-  row.name:SetPoint("TOPLEFT", 28, -5); row.name:SetWidth(CONTENT_W - 28 - 110)
+  row.name:SetPoint("TOPLEFT", 46, -5); row.name:SetWidth(CONTENT_W - 46 - 112)
+  row.sub = Text(row, "GameFontNormalSmall")
+  row.sub:SetPoint("TOPLEFT", 46, -21); row.sub:SetWidth(CONTENT_W - 46 - 8)
+  row.sub:Hide()
+  row.where = Text(row, "GameFontNormalSmall")
+  row.where:SetPoint("TOPLEFT", 46, -21); row.where:SetWidth(CONTENT_W - 46 - 8)
+  row.where:Hide()
   row.xp = Text(row, "GameFontNormalSmall", "RIGHT")
   row.xp:SetPoint("TOPRIGHT", -2, -6); row.xp:SetWidth(104)
   row.rep = Text(row, "GameFontDisableSmall")
@@ -219,7 +290,19 @@ local function GetRow(i)
   row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
   row:SetScript("OnClick", function(self, button)
     if not self.questId then return end
-    if button == "RightButton" and self.entry then WaypointFor(self, IsShiftKeyDown and IsShiftKeyDown()) else UI.Open(self.questId) end
+    if frame and frame.box then frame.box:ClearFocus() end
+    if button == "RightButton" and self.entry then
+      local mode = (IsShiftKeyDown and IsShiftKeyDown() and "end") or (IsAltKeyDown and IsAltKeyDown() and "start") or nil
+      WaypointFor(self, mode)
+    elseif not current and results then
+      -- Picked from a list: remember it so Back returns there.
+      local saved = { results = results, notice = notice }
+      UI.Open(self.questId)
+      backTo = saved
+      Render()
+    else
+      UI.Open(self.questId, true) -- inside a chain the list (if any) stays one Back away
+    end
   end)
   row:SetScript("OnEnter", ShowQuestTip)
   row:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -267,12 +350,16 @@ local function PlaceRow(n, y, h)
   row.hl:Hide(); row.bar:Hide()
   row.questId, row.entry = nil, nil
   row.rep:Hide(); row.rep:SetWordWrap(false); row.rep:SetWidth(CONTENT_W - 40)
-  row.xp:SetText(""); row.num:SetText("")
+  row.xp:SetText(""); row.num:SetText(""); row.name:SetText("")
+  row.status:Hide(); row.sub:SetText(""); row.sub:Hide(); row.where:SetText(""); row.where:Hide()
+  -- Rows are reused: the summary and result rows move the name, so put it back for a chain row.
+  row.name:ClearAllPoints(); row.name:SetPoint("TOPLEFT", 46, -5); row.name:SetWidth(CONTENT_W - 46 - 112)
   return row
 end
 
-local function Render()
+function Render()
   if not frame then return end
+  frame.back:SetShown(current ~= nil and backTo ~= nil)
   for _, row in ipairs(rows) do row:Hide(); ReleaseIcons(row) end
 
   if Data.state == "building" then
@@ -373,7 +460,7 @@ local function Render()
   local summary = nextRow(#itemList == 0 and 42 or (22 + iconLines * (ICON + 3) + 8))
   summary.name:SetText("Item rewards across " .. (showRemaining and "the rest of the chain" or "the chain"))
   summary.name:SetWidth(CONTENT_W - 10)
-  summary.name:SetPoint("TOPLEFT", 4, -5)
+  summary.name:ClearAllPoints(); summary.name:SetPoint("TOPLEFT", 4, -5)
   local repText = SumReputation(counted)
   if #itemList == 0 then
     summary.rep:SetText("No item rewards recorded in QuestieDB for these quests.")
@@ -396,25 +483,38 @@ local function Render()
       local rowLines = math.max(1, math.ceil(#e.items / 14))
       local isCurrent = e.id == current
       if isCurrent then currentY = y end
-      local row = nextRow(hasItems and (28 + rowLines * (ICON + 3)) or 28)
+      -- A second line only for your quest and for locked quests; the icon carries the rest.
+      local sub = {}
+      if isCurrent then sub[#sub + 1] = "|cffffd100You are here|r" end
+      if #(e.unmet or {}) > 0 then sub[#sub + 1] = "|cffff8a8aNeeds: " .. table.concat(e.unmet, " · ") .. "|r" end
+      local subH = #sub > 0 and 12 or 0
+      -- Where it happens: the zones of its kills, objects and drops (or where it is handed in).
+      local whereText = WhereText(e)
+      local whereH = whereText and 12 or 0
+      local row = nextRow(28 + subH + whereH + (hasItems and rowLines * (ICON + 3) or 0))
       row.questId = e.id
-      row.name:SetWidth(CONTENT_W - 28 - 110)
-      row.name:ClearAllPoints(); row.name:SetPoint("TOPLEFT", 28, -5)
-      row.num:SetText(qi == 1 and tostring(li) or "·")
-      local color = e.status == "done" and "|cff66cc66" or (isCurrent and "|cffffd100" or "|cffffffff")
-      local tag = ({ done = "  |cff66cc66done|r", log = "  |cff8fc4fin log|r",
-        available = "  |cff66ff66available|r", locked = "  |cffff6666locked|r" })[e.status] or ""
-      local lvl = e.level and e.level > 0 and ("|cff9d9d9d[" .. e.level .. "]|r ") or ""
       row.entry = e
-      if isCurrent then tag = tag .. "  |cffffd100<< YOU ARE HERE|r" end
-      row.name:SetText(lvl .. color .. e.name .. "|r" .. tag)
+      row.num:SetText(qi == 1 and tostring(li) or "·")
+      local cell = STATUS_CELL[e.status]
+      if cell then
+        row.status:SetTexCoord(cell * 0.25, (cell + 1) * 0.25, 0, 1)
+        row.status:Show()
+      end
+      local color = isCurrent and "|cffffd100" or (e.status == "done" and "|cffa8c8ac" or (e.status == "locked" and "|cffb4b4b4" or "|cffffffff"))
+      local lvl = e.level and e.level > 0 and ("|cff9d9d9d[" .. e.level .. "]|r ") or ""
+      row.name:SetText(lvl .. color .. e.name .. "|r")
+      if #sub > 0 then row.sub:SetText(table.concat(sub, "  ·  ")); row.sub:Show() end
+      if whereText then
+        row.where:ClearAllPoints(); row.where:SetPoint("TOPLEFT", 46, -(21 + subH))
+        row.where:SetText(whereText); row.where:Show()
+      end
       if e.xp > 0 then
         row.xp:SetText((e.xpExact and "" or "~") .. Num(e.xp) .. " XP")
       end
       if isCurrent then
         row.hl:SetVertexColor(BRONZE_HOVER[1], BRONZE_HOVER[2], BRONZE_HOVER[3], 0.22); row.hl:Show(); row.bar:Show()
       end
-      if hasItems then PlaceIcons(row, e.items, 28, -24, 14) end
+      if hasItems then PlaceIcons(row, e.items, 46, -(24 + subH + whereH), 14) end
     end
   end
   content:SetHeight(math.max(y, 1))
@@ -474,7 +574,7 @@ local function Create()
   f:SetBackdropColor(0.05, 0.05, 0.05, 0.95)
 
   f.title = Text(f, "GameFontNormalLarge")
-  f.title:SetPoint("TOPLEFT", 14, -12); f.title:SetWidth(WIDTH - 60)
+  f.title:SetPoint("TOPLEFT", 14, -12); f.title:SetWidth(WIDTH - 120)
   f.sub = Text(f, "GameFontHighlightSmall")
   f.sub:SetPoint("TOPLEFT", 14, -34); f.sub:SetWidth(WIDTH - 28)
   f.stats = Text(f, "GameFontNormalSmall")
@@ -486,6 +586,17 @@ local function Create()
   local close = Button(f, "X", 22, 22)
   close:SetPoint("TOPRIGHT", -16, -14)
   close:SetScript("OnClick", function() f:Hide() end)
+
+  local back = Button(f, "Back", 52, 22)
+  back:SetPoint("RIGHT", close, "LEFT", -6, 0)
+  back:SetScript("OnClick", function()
+    if not backTo then return end
+    current, results, notice = nil, backTo.results, backTo.notice
+    backTo = nil
+    Render()
+  end)
+  back:Hide()
+  f.back = back
 
   local box = CreateFrame("EditBox", nil, f, "BackdropTemplate")
   box:SetSize(WIDTH - 28 - 130, 24)
@@ -537,25 +648,43 @@ local function Create()
     self:SetVerticalScroll(v)
   end)
 
-  -- Escape closes the window. Keys the window does not use are passed straight on.
-  f:EnableKeyboard(true)
-  f:SetScript("OnKeyDown", function(self, key)
-    if key == "ESCAPE" then
-      self:SetPropagateKeyboardInput(false)
-      self:Hide()
-    else
-      self:SetPropagateKeyboardInput(true)
-    end
-  end)
+  -- Escape closes the window the way Blizzard's own windows close. The window never takes keyboard
+  -- input itself: SetPropagateKeyboardInput is blocked in combat, so a window that listens for keys
+  -- can swallow WASD there.
+  if UISpecialFrames then table.insert(UISpecialFrames, "QuestThreadFrame") end
+  -- Typing focus (the search box) also swallows WASD, so let go of it when combat starts.
+  f:RegisterEvent("PLAYER_REGEN_DISABLED")
+  f:SetScript("OnEvent", function() box:ClearFocus() end)
+  -- A click anywhere else takes the typing focus off the search box, or WASD would type into it.
+  f:SetScript("OnMouseDown", function() box:ClearFocus() end)
   f:Hide()
   frame = f
   return f
 end
 
-function UI.Open(questId)
+function UI.Open(questId, keepBack)
   Create()
   current = questId and tonumber(questId) or current
   notice, results = nil, nil
+  if not keepBack then backTo = nil end
+  frame:Show()
+  frame:Raise()
+  Data.Ensure(Render)
+  if Data.state == "building" then WatchBuild() end
+  Render()
+end
+
+-- Several quests at once (e.g. all the quests behind one map icon): one opens its chain, more show a pick list.
+function UI.OpenIds(ids)
+  if #ids <= 1 then return UI.Open(ids[1]) end
+  Create()
+  local hits = {}
+  for _, id in ipairs(ids) do hits[#hits + 1] = { id = id, name = Data.Name(id) or ("Quest " .. id) } end
+  table.sort(hits, function(a, b)
+    if a.name ~= b.name then return a.name < b.name end
+    return a.id < b.id
+  end)
+  current, results, notice, backTo = nil, hits, ("%d quests share that icon."):format(#ids), nil
   frame:Show()
   frame:Raise()
   Data.Ensure(Render)
@@ -566,6 +695,7 @@ end
 function UI.OpenText(text)
   Create()
   local id, msg, hits = Data.Resolve(text)
+  backTo = nil
   if not id then
     current, notice, results = nil, msg or "Enter a quest ID, link or name.", hits
   else
