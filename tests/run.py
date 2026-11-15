@@ -150,6 +150,10 @@ function(quests, items)
     function m.EnableKeyboard(s, v) s._kb = v end
     function m.ClearFocus(s) s._cleared = (s._cleared or 0) + 1 end
     function m.SetPropagateKeyboardInput(s, v) s._prop = v end
+    function m.SetTextColor(s, r, g, b) s._color = { r, g, b } end
+    function m.GetStringWidth(s) return 80 end
+    function m.RegisterEvent(s, e) s._events = s._events or {}; s._events[e] = true end
+    function m.SetParent(s, p) s._parent = p end
     function m.SetFocus(s) s._focused = true end
     function m.HighlightText(s) s._hl = true end
     function m.SetTexCoord(s, a, b, c, d) s._tc = { a, b, c, d } end
@@ -222,7 +226,18 @@ function(quests, items)
   _G.QuestMapFrame_GetDetailQuestID = function() return _G.testDetail end
   _G.QuestMapFrame_ShowQuestDetails = function() end
   _G.hooks = {}
-  _G.hooksecurefunc = function(name, fn) hooks[name] = fn end
+  _G.hooksecurefunc = function(a, b, c)
+    if type(a) == "table" then
+      local orig = a[b]
+      a[b] = function(...) local r = orig(...); c(...); return r end
+    else
+      hooks[a] = b
+    end
+  end
+  _G.C_Timer = { After = function(_, fn) fn() end }
+  _G.testQid = 0
+  _G.GetQuestID = function() return testQid end
+  _G.QuestFrameDetailPanel = stub()
   _G.testShift, _G.testAlt = false, false
   _G.IsShiftKeyDown = function() return testShift end
   _G.testCtrl, _G.testMouse, _G.testFocus = false, false, nil
@@ -241,6 +256,7 @@ function(quests, items)
   _G.GetQuestLogRewardXP = function(id) local v = testClientXp[id]; if v then return v + 100, v end end
   _G.C_QuestLog = {
     IsQuestFlaggedCompleted = function(id) return id == 65 end,
+    IsOnQuest = function(id) return id == 502 end,
     GetLogIndexForQuestID = function(id) return testClientXp[id] and 1 or nil end,
     GetNumQuestLogEntries = function() return 1 end,
     GetInfo = function(i) return { questID = 166, isHeader = false } end,
@@ -262,6 +278,7 @@ function(quests, items)
     nextQuestInChain = ent(quests, "next"), breadcrumbForQuestId = ent(quests, "bcFor"), breadcrumbs = ent(quests, "bcs"),
     name = ent(quests, "name"), reputationReward = ent(quests, "rep"),
     questLevel = function(id) return 30 end,
+    specialFlags = function(id) if id == 500 or id == 504 then return 1 end return 0 end,
     requiredLevel = ent(quests, "reqLevel"),
     objectivesText = function(id) if id == 166 then return { "Kill things." } end end,
     startedBy = function(id) return { { 1000 } } end,
@@ -295,7 +312,7 @@ env(to_lua_quests(), lua.table_from({int(k): lua.table_from(v) for k, v in raw["
 xp_lua = lua.table_from({int(k): lua.table_from(v) for k, v in raw["xp"].items()})
 lua.globals().LibQuestieDB.Support.Get = lua.eval("function(t) return function(name) if name == 'QuestXP' then return { db = t } end; if name == 'ZoneDB' then return { private = { areaIdToUiMapId = { [12] = 1429 } } } end end end")(xp_lua)
 ns2 = lua.table()
-for fn in ("Core.lua", "Data.lua", "UI.lua", "Main.lua"):
+for fn in ("Core.lua", "Data.lua", "UI.lua", "QuestFrame.lua", "Main.lua"):
     loader(source(fn), fn, ns2)
 
 G = lua.globals()
@@ -589,6 +606,83 @@ G.testCtrl = False
 check("Ctrl+C on a pick-list row copies that quest's link", link._shown and link.box._text.endswith("quest=%d" % hits[0].questId), link.box._text)
 hits[0]._scripts["OnLeave"](hits[0])
 link._shown = False
+
+# ---- the quest dialogue: chain button, quest id, green for a repeatable done once ----
+check("flags: bit 1 means repeatable", Core.IsRepeatable(1) and Core.IsRepeatable(3) and not Core.IsRepeatable(2) and not Core.IsRepeatable(0) and not Core.IsRepeatable(None))
+D = ns2.Data
+
+
+def lp(f):
+    return list(list(f._pts.values())[-1].values())  # [point, relativeTo, relativePoint, x, y]
+
+
+check("a repeatable quest is told apart from a normal one", D.IsRepeatable(500) and not D.IsRepeatable(501))
+check("a repeatable quest never done is not done", not D.RepeatableDone(500) and D.QuestState(500) == "new")
+D.RecordTurnIn(501)
+check("turn-ins of normal quests are not remembered", not (G.QuestThreadDB.turnedIn and G.QuestThreadDB.turnedIn[501]))
+check("a quest flagged completed is done", D.QuestState(65) == "done")
+check("a quest in your log is in the log state", D.QuestState(502) == "log")
+G.testQid = 500
+G.QuestFrameDetailPanel._shown = True
+QF = ns2.QuestFrame
+QF.Update()
+idfs = next((f for f in G.stubs.values() if f._text == "Quest ID: 500"), None)
+idfs._mark = "id"
+G.QuestFrameDetailPanel._mark = "panel"
+chain_btn = next((f for f in G.stubs.values() if f.questID == 500 and f._scripts["OnClick"] is not None), None)
+check("the quest dialogue shows the quest id and a chain button", idfs is not None and chain_btn is not None)
+check("the id is shown in the top right corner of the panel", idfs._shown and lp(idfs)[0] == "TOPRIGHT" and lp(idfs)[3] == -20 and lp(idfs)[4] == -35, lp(idfs))
+check("the chain button sits just left of the id", lp(chain_btn)[0] == "RIGHT" and lp(chain_btn)[1]._mark == "id", lp(chain_btn)[0])
+check("an undone repeatable quest is orange", list(idfs._color.values()) == [1, 0.5, 0], idfs._color)
+qf_events = next(f for f in G.stubs.values() if f._events is not None and f._events["QUEST_TURNED_IN"])
+qf_events._scripts["OnEvent"](qf_events, "QUEST_TURNED_IN", 500)
+check("a turn-in of a repeatable quest is remembered", G.QuestThreadDB.turnedIn[500] == 1)
+check("a repeatable quest done once counts as done", D.RepeatableDone(500) and D.QuestState(500) == "done")
+QF.Update()
+check("the id turns green for a repeatable quest done at least once", list(idfs._color.values()) == [0, 1, 0], idfs._color)
+G.testQid = 504
+QF.Update()
+check("another repeatable quest never done stays orange", list(next(f for f in G.stubs.values() if f._text == "Quest ID: 504")._color.values()) == [1, 0.5, 0])
+G.Questie = lua.eval("{ db = { char = { journey = { { Event = 'Quest', SubType = 'Complete', Quest = 504 } } } } }")
+check("Questie's journey also proves a repeatable quest was done", D.RepeatableDone(504))
+G.Questie = None
+G.testQid = 502
+QF.Update()
+check("a quest in your log is violet", list(next(f for f in G.stubs.values() if f._text == "Quest ID: 502")._color.values()) == [0.8, 0, 1])
+G.testQid = 65
+QF.Update()
+check("a completed normal quest is green", list(next(f for f in G.stubs.values() if f._text == "Quest ID: 65")._color.values()) == [0, 1, 0])
+G.testQid = 500
+QF.Update()
+chain_btn._scripts["OnClick"](chain_btn)
+check("the chain button opens the quest's chain window", kwin._shown)
+kwin._shown = False
+qf_events._scripts["OnEvent"](qf_events, "QUEST_FINISHED")
+check("the id and button go away when the dialogue closes", not next(f for f in G.stubs.values() if f._parent is not None and f._parent._mark == "panel")._shown)
+
+# with the QuestID addon loaded: only the button is added, and its text is made green for a done repeatable
+fake_text = G.newStub()
+fake_text.GetObjectType = lua.eval("function() return 'FontString' end")
+fake_text._text = "Quest ID: 500"
+G.QuestFrameDetailPanel.GetRegions = lua.eval("function() return nil end")
+G.QuestID = lua.eval("{ QuestFrame = { Update = function() end, UpdateColor = function() end } }")
+G.QuestFrameDetailPanel.GetRegions = lua.eval("function(txt) return function() return txt end end")(fake_text)
+QF.ready = None
+QF.Init()
+G.testQid = 500
+G.QuestFrameDetailPanel._shown = True
+QF.Update()
+check("with QuestID loaded this addon draws no id text of its own", not idfs._shown)
+check("with QuestID loaded the button stays left of its text", lp(chain_btn)[0] == "TOPRIGHT" and abs(lp(chain_btn)[3] - (-20 - 80 - 6)) < 1e-9, lp(chain_btn))
+G.QuestID.QuestFrame.Update(G.QuestID.QuestFrame)
+check("QuestID's text is made green for a repeatable quest done once", list(fake_text._color.values()) == [0, 1, 0], fake_text._color)
+fake_text._color = None
+G.testQid = 504
+fake_text._text = "Quest ID: 504"
+G.QuestID.QuestFrame.UpdateColor(G.QuestID.QuestFrame)
+check("QuestID's text is left alone for a repeatable never done", fake_text._color is None)
+G.QuestID = None
+G.testQid = 0
 
 # ---- where a quest's objectives happen ----
 def lookups():

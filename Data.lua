@@ -111,6 +111,45 @@ function Data.IsDone(id)
   return C_QuestLog and C_QuestLog.IsQuestFlaggedCompleted and C_QuestLog.IsQuestFlaggedCompleted(id) and true or false
 end
 
+function Data.IsRepeatable(id)
+  local ok, flags = pcall(function() return QuestDB and QuestDB.specialFlags and QuestDB.specialFlags(id) end)
+  return ok and Core.IsRepeatable(flags) or false
+end
+
+-- Does Questie's My Journey log a completion of this quest? (Questie is optional.)
+local function JourneyHas(id)
+  local j = Questie and Questie.db and Questie.db.char and Questie.db.char.journey
+  if type(j) ~= "table" then return false end
+  for _, e in pairs(j) do
+    if type(e) == "table" and e.Event == "Quest" and e.SubType == "Complete" and tonumber(e.Quest) == id then return true end
+  end
+  return false
+end
+
+-- A repeatable quest is never flagged completed for good, so "done at least once" comes from three places:
+-- turn-ins QuestThread has seen itself, the game's flag (dailies and weeklies while it lasts), and Questie's journey.
+function Data.RepeatableDone(id)
+  if not Data.IsRepeatable(id) then return false end
+  local seen = QuestThreadDB and QuestThreadDB.turnedIn
+  if seen and seen[id] then return true end
+  return Data.IsDone(id) or JourneyHas(id)
+end
+
+-- Called on QUEST_TURNED_IN; only repeatable quests are remembered.
+function Data.RecordTurnIn(id)
+  if type(id) ~= "number" or not Data.IsRepeatable(id) then return end
+  QuestThreadDB = QuestThreadDB or {}
+  QuestThreadDB.turnedIn = QuestThreadDB.turnedIn or {}
+  QuestThreadDB.turnedIn[id] = (QuestThreadDB.turnedIn[id] or 0) + 1
+end
+
+-- "done" (completed, or a repeatable completed at least once), "log" (in your quest log) or "new".
+function Data.QuestState(id)
+  if Data.IsDone(id) or Data.RepeatableDone(id) then return "done" end
+  if C_QuestLog and C_QuestLog.IsOnQuest and C_QuestLog.IsOnQuest(id) then return "log" end
+  return "new"
+end
+
 -- Who starts ("start") or ends ("end") a quest: { { kind = "npc"|"object", id, name }, ... }.
 function Data.Givers(id, which)
   local t = (which == "end") and QuestDB.finishedBy(id) or QuestDB.startedBy(id)

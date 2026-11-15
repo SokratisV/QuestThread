@@ -44,6 +44,8 @@ local function MakeChainButton(parent, w, h)
   return b
 end
 
+ns.MakeChainButton = MakeChainButton -- the quest dialogue (QuestFrame.lua) uses the same button
+
 local function Tip(b, text)
   b:SetScript("OnEnter", function(self)
     GameTooltip:SetOwner(self, "ANCHOR_LEFT")
@@ -325,6 +327,7 @@ ev:SetScript("OnEvent", function(_, event, name)
     if LibQuestieDB and LibQuestieDB.RequireContract then ok, why = LibQuestieDB.RequireContract(4) end
     if not ok then Say(why or "QuestieDB is incompatible.") return end
     StartIconWatch()
+    ns.QuestFrame.Init()
   end
   if event == "ADDON_LOADED" and name ~= "Blizzard_WorldMap" and name ~= "Blizzard_QuestMap" then return end
   HookQuestLog()

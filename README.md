@@ -22,6 +22,13 @@ Built for **WoW Forever** (client interface 16001).
   `/qthread defias`). One match opens it; several show a list to pick from. `/qthread` on its own opens the
   quest that is open in your log.
 
+- **Talking to someone:** the quest dialogue (accept, progress and reward steps) gets the chain button and the
+  quest's ID in its top-right corner. The ID is green for a finished quest, **and for a repeatable quest you
+  have completed at least once**, violet while it is in your log, orange otherwise. A repeatable quest has no
+  lasting "completed" flag in the game, so this counts the turn-ins QuestThread sees from now on, plus the game's
+  flag (dailies and weeklies) and Questie's My Journey history if you have Questie. If the QuestID addon is also
+  loaded, QuestThread adds only the chain button next to its text and turns that text green for such a quest.
+
 While the window is open it follows whichever quest you open in the quest log. Escape closes it.
 
 ## What the window shows

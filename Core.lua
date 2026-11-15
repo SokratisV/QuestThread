@@ -401,6 +401,11 @@ function Core.BestSpot(objs, canUse)
   return nil
 end
 
+-- QuestieDB's `specialFlags` bitmask: bit 1 = repeatable.
+function Core.IsRepeatable(flags)
+  return type(flags) == "number" and math.floor(flags) % 2 == 1
+end
+
 -- The Wowhead page of a quest on WoW Forever (a plain link to copy; nothing is fetched from the site).
 function Core.QuestUrl(id)
   return ("https://www.wowhead.com/forever/quest=%d"):format(id)
