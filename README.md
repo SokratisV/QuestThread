@@ -36,6 +36,10 @@ While the window is open it follows whichever quest you open in the quest log. E
   of spawns in its main zone for a kill, a collected item (where it drops) or an object. A step with no known
   objective goes to its quest giver. **Shift+right-click** goes to where the quest is handed in and
   **Alt+right-click** to where it starts. Uses TomTom if you have it, otherwise the game's own waypoint.
+- Every quest shows its **ID** (grey, after the name). **Hover a quest and press Ctrl+C** (in the chain or in a
+  list of results) and a small box appears with its **Wowhead link** already selected; the copy closes it, and so
+  does Escape. This works like Wowhead Quick Link and is only listening while the mouse is on a quest and you are
+  out of combat, so it never takes your movement keys.
 - XP per quest and for the chain, reputation totals, and every reward item (hover for its tooltip).
 - **Show remaining** totals only what you haven't finished.
 - Breadcrumb quests that can also lead into the chain are listed separately.

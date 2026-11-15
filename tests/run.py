@@ -149,6 +149,9 @@ function(quests, items)
     function m.SetHeight(s, h) s._h = h end
     function m.EnableKeyboard(s, v) s._kb = v end
     function m.ClearFocus(s) s._cleared = (s._cleared or 0) + 1 end
+    function m.SetPropagateKeyboardInput(s, v) s._prop = v end
+    function m.SetFocus(s) s._focused = true end
+    function m.HighlightText(s) s._hl = true end
     function m.SetTexCoord(s, a, b, c, d) s._tc = { a, b, c, d } end
     function m.SetPoint(s, p, rel, a, x, y)
       s._pt = { p, rel, a, x, y }
@@ -224,6 +227,8 @@ function(quests, items)
   _G.IsShiftKeyDown = function() return testShift end
   _G.testCtrl, _G.testMouse, _G.testFocus = false, false, nil
   _G.IsControlKeyDown = function() return testCtrl end
+  _G.testCombat = false
+  _G.InCombatLockdown = function() return testCombat end
   _G.IsAltKeyDown = function() return testAlt end
   _G.IsMouseButtonDown = function() return testMouse end
   _G.testFoci = nil
@@ -511,6 +516,79 @@ check("clicking the window takes focus off the search box", (kwin.box._cleared o
 cleared = kwin.box._cleared or 0
 kwin._scripts["OnEvent"](kwin, "PLAYER_REGEN_DISABLED")
 check("the search box lets go of the keyboard when combat starts", (kwin.box._cleared or 0) == cleared + 1)
+
+# ---- quest ids and the Wowhead link (Ctrl+C while hovering) ----
+check("the Wowhead link is a plain forever quest link", Core.QuestUrl(166) == "https://www.wowhead.com/forever/quest=166", Core.QuestUrl(166))
+G.SlashCmdList["QUESTTHREAD"]("166")
+id_rows = [f for f in G.stubs.values() if f._shown and f.entry is not None]
+check("every chain row shows its quest id next to the name", len(id_rows) >= 8 and all(("#%d" % f.entry.id) in f.name._text for f in id_rows), [f.name._text for f in id_rows][:2])
+hrow = next(f for f in id_rows if f.entry.id == 166)
+G.tipLines = lua.table()
+hrow._scripts["OnEnter"](hrow)
+check("the tooltip mentions the Ctrl+C shortcut", any("Ctrl+C" in s for s in G.tipLines.values()), list(G.tipLines.values())[-2:])
+keys = frame_named("QuestThreadKeys")
+check("hovering a quest turns the key listener on", keys is not None and keys._kb is True)
+check("the window itself still takes no keyboard input", kwin._kb is not True)
+G.testCtrl = True
+keys._scripts["OnKeyDown"](keys, "C")
+G.testCtrl = False
+link = frame_named("QuestThreadLinkFrame")
+check("Ctrl+C on a hovered quest opens the link box with the link selected",
+      link is not None and link._shown and link.box._text == "https://www.wowhead.com/forever/quest=166" and link.box._focused and link.box._hl,
+      link.box._text if link else None)
+check("Ctrl+C is not passed on to the game", keys._prop is False)
+check("the link box names the quest and its id", "#166" in link.title._text, link.title._text)
+check("the link box can be closed with Escape", "QuestThreadLinkFrame" in list(G.UISpecialFrames.values()) and link.box._scripts["OnEscapePressed"] is not None)
+keys._scripts["OnKeyDown"](keys, "W")
+check("other keys go straight on to the game", keys._prop is True)
+G.testCtrl = True
+keys._scripts["OnKeyDown"](keys, "V")
+G.testCtrl = False
+check("Ctrl with another key goes straight on too", keys._prop is True)
+link.box._text = "typed"
+link.box._scripts["OnTextChanged"](link.box, True)
+check("typing in the link box puts the link back", link.box._text == "https://www.wowhead.com/forever/quest=166", link.box._text)
+G.testCtrl = True
+link.box._scripts["OnKeyUp"](link.box, "C")
+G.testCtrl = False
+check("the link box closes once the copy is done", not link._shown)
+# combat: the listener must be off, and a box that is open goes away
+keys._scripts["OnEvent"](keys, "PLAYER_REGEN_DISABLED")
+check("combat turns the key listener off", keys._kb is False)
+G.testCtrl = True
+keys._scripts["OnKeyDown"](keys, "C")
+G.testCtrl = False
+link._shown = True
+link._scripts["OnEvent"](link, "PLAYER_REGEN_DISABLED")
+check("an open link box closes when combat starts", not link._shown)
+hrow._scripts["OnLeave"](hrow)
+G.testCombat = True
+hrow._scripts["OnEnter"](hrow)
+check("hovering a quest in combat does not turn the listener on", keys._kb is False)
+G.testCombat = False
+keys._scripts["OnEvent"](keys, "PLAYER_REGEN_ENABLED")
+check("the listener comes back after combat while the mouse is still on the quest", keys._kb is True)
+hrow._scripts["OnLeave"](hrow)
+check("moving off the quest turns the listener off", keys._kb is False)
+G.testCtrl = True
+keys._scripts["OnKeyDown"](keys, "C")
+G.testCtrl = False
+check("Ctrl+C with no quest hovered does nothing", not link._shown)
+hrow._scripts["OnEnter"](hrow)
+kwin._scripts["OnHide"](kwin)
+check("closing the window turns the listener off", keys._kb is False)
+# rows of the pick list work too
+G.SlashCmdList["QUESTTHREAD"]("defias")
+hits = [f for f in G.stubs.values() if f._shown and f.questId and f.entry is None and "#" in (f.name._text or "")]
+G.tipLines = lua.table()
+hits[0]._scripts["OnEnter"](hits[0])
+check("a pick-list row has a tooltip with its id and the shortcut", any("Quest #%d" % hits[0].questId in s for s in G.tipLines.values()) and any("Ctrl+C" in s for s in G.tipLines.values()), list(G.tipLines.values()))
+G.testCtrl = True
+keys._scripts["OnKeyDown"](keys, "C")
+G.testCtrl = False
+check("Ctrl+C on a pick-list row copies that quest's link", link._shown and link.box._text.endswith("quest=%d" % hits[0].questId), link.box._text)
+hits[0]._scripts["OnLeave"](hits[0])
+link._shown = False
 
 # ---- where a quest's objectives happen ----
 def lookups():

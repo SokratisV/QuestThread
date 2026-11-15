@@ -401,4 +401,9 @@ function Core.BestSpot(objs, canUse)
   return nil
 end
 
+-- The Wowhead page of a quest on WoW Forever (a plain link to copy; nothing is fetched from the site).
+function Core.QuestUrl(id)
+  return ("https://www.wowhead.com/forever/quest=%d"):format(id)
+end
+
 return Core

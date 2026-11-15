@@ -185,7 +185,17 @@ end
 
 local function ShowQuestTip(row)
   local e = row.entry
-  if not e then return end
+  if not e then
+    -- A row of the search / pick list: just the name, the id and the link shortcut.
+    if row.questId then
+      GameTooltip:SetOwner(row, "ANCHOR_RIGHT")
+      GameTooltip:AddLine(Data.Name(row.questId) or ("Quest " .. row.questId), 1, 0.82, 0)
+      GameTooltip:AddLine("Quest #" .. row.questId, 0.8, 0.8, 0.8)
+      GameTooltip:AddLine("Ctrl+C: copy the Wowhead link", 0.6, 0.6, 0.6)
+      GameTooltip:Show()
+    end
+    return
+  end
   GameTooltip:SetOwner(row, "ANCHOR_RIGHT")
   GameTooltip:AddLine(e.name, 1, 0.82, 0)
   local lv = e.level and e.level > 0 and ("Level " .. e.level) or nil
@@ -220,7 +230,7 @@ local function ShowQuestTip(row)
     end
   end
   GameTooltip:AddLine(" ")
-  GameTooltip:AddLine("Left-click: open this quest's chain", 0.6, 0.6, 0.6)
+  GameTooltip:AddLine("Left-click: open this quest's chain · Ctrl+C: copy the Wowhead link", 0.6, 0.6, 0.6, true)
   GameTooltip:AddLine("Right-click: waypoint to where the objectives are", 0.6, 0.6, 0.6, true)
   GameTooltip:AddLine("Shift+Right-click: to where it is handed in · Alt+Right-click: to where it starts", 0.6, 0.6, 0.6, true)
   GameTooltip:Show()
@@ -254,6 +264,111 @@ local function WaypointFor(row, mode)
     end
   end
   Say("No map location is known for " .. givers[1].name .. ".")
+end
+
+-- ---- Wowhead link: hover a quest and press Ctrl+C ----
+-- Like Wowhead Quick Link: a small box with the link already selected, closed by the copy itself.
+-- The window never listens for keys. A separate frame does, and only while the mouse is over a quest
+-- and you are out of combat, passing every key but Ctrl+C straight on (SetPropagateKeyboardInput
+-- is blocked in combat, and a frame that kept listening there would swallow WASD).
+local hoverRow, linkFrame, keys
+
+local function InCombat() return InCombatLockdown and InCombatLockdown() end
+
+local function HideLink()
+  if linkFrame then linkFrame:Hide() end
+end
+
+local function ShowLink(id)
+  if not linkFrame then
+    local f = CreateFrame("Frame", "QuestThreadLinkFrame", UIParent, "BackdropTemplate")
+    f:SetSize(404, 76)
+    f:SetFrameStrata("FULLSCREEN_DIALOG")
+    f:SetToplevel(true)
+    f:SetClampedToScreen(true)
+    Boxed(f, true)
+    f:SetBackdropColor(0.05, 0.05, 0.05, 0.97)
+    f.title = Text(f, "GameFontNormal")
+    f.title:SetPoint("TOPLEFT", 14, -10); f.title:SetWidth(376)
+    f.hint = Text(f, "GameFontHighlightSmall")
+    f.hint:SetPoint("TOPLEFT", 14, -28); f.hint:SetWidth(376)
+    f.hint:SetText("Wowhead link. Ctrl+C to copy, Esc to close.")
+    local box = CreateFrame("EditBox", nil, f, "BackdropTemplate")
+    box:SetSize(376, 24)
+    box:SetPoint("TOPLEFT", 14, -44)
+    box:SetAutoFocus(false)
+    box:SetFontObject("ChatFontNormal")
+    box:SetTextInsets(8, 8, 0, 0)
+    Boxed(box, true)
+    box:SetBackdropColor(0, 0, 0, 0.5)
+    local function Close() f:Hide() end
+    box:SetScript("OnEscapePressed", Close)
+    box:SetScript("OnEnterPressed", Close)
+    box:SetScript("OnEditFocusLost", Close)
+    -- Read-only: any typing puts the link back and selects it again.
+    box:SetScript("OnTextChanged", function(self, byUser)
+      if byUser and self:GetText() ~= f.url then self:SetText(f.url or ""); self:HighlightText() end
+    end)
+    -- The copy has happened by the time Ctrl+C is released, so the box can go.
+    box:SetScript("OnKeyUp", function(_, key)
+      if (key == "C" and IsControlKeyDown()) or ((key == "LCTRL" or key == "RCTRL") and IsKeyDown and IsKeyDown("C")) then Close() end
+    end)
+    f.box = box
+    f:SetScript("OnHide", function() box:ClearFocus() end)
+    f:RegisterEvent("PLAYER_REGEN_DISABLED")
+    f:SetScript("OnEvent", Close)
+    if UISpecialFrames then table.insert(UISpecialFrames, "QuestThreadLinkFrame") end
+    f:Hide()
+    linkFrame = f
+  end
+  local f = linkFrame
+  f.url = Core.QuestUrl(id)
+  f.title:SetText((Data.Name(id) or ("Quest " .. id)) .. "  |cff808080#" .. id .. "|r")
+  f:ClearAllPoints()
+  if frame and frame:IsShown() then f:SetPoint("BOTTOM", frame, "TOP", 0, 4) else f:SetPoint("CENTER", UIParent, "CENTER", 0, 200) end
+  f.box:SetText(f.url)
+  f:Show()
+  f:Raise()
+  f.box:SetFocus()
+  f.box:HighlightText()
+end
+
+local function ListenForKeys(on)
+  if on and not InCombat() then
+    if not keys then
+      keys = CreateFrame("Frame", "QuestThreadKeys", UIParent)
+      keys:SetSize(1, 1)
+      keys:SetPoint("CENTER")
+      keys:SetScript("OnKeyDown", function(self, key)
+        if InCombat() then self:EnableKeyboard(false); return end
+        local row = hoverRow
+        if key == "C" and IsControlKeyDown() and row and row:IsShown() and row.questId then
+          self:SetPropagateKeyboardInput(false)
+          ShowLink(row.questId)
+        else
+          self:SetPropagateKeyboardInput(true)
+        end
+      end)
+      keys:RegisterEvent("PLAYER_REGEN_DISABLED")
+      keys:RegisterEvent("PLAYER_REGEN_ENABLED")
+      keys:SetScript("OnEvent", function(self, event)
+        if event == "PLAYER_REGEN_DISABLED" then self:EnableKeyboard(false)
+        elseif hoverRow and hoverRow:IsShown() then self:EnableKeyboard(true) end
+      end)
+    end
+    keys:EnableKeyboard(true)
+  elseif keys then
+    keys:EnableKeyboard(false)
+  end
+end
+
+local function Hover(row)
+  hoverRow = row
+  ListenForKeys(row.questId ~= nil)
+end
+
+local function Unhover(row)
+  if hoverRow == row then hoverRow = nil; ListenForKeys(false) end
 end
 
 -- ---- rows ----
@@ -304,8 +419,8 @@ local function GetRow(i)
       UI.Open(self.questId, true) -- inside a chain the list (if any) stays one Back away
     end
   end)
-  row:SetScript("OnEnter", ShowQuestTip)
-  row:SetScript("OnLeave", function() GameTooltip:Hide() end)
+  row:SetScript("OnEnter", function(self) Hover(self); ShowQuestTip(self) end)
+  row:SetScript("OnLeave", function(self) Unhover(self); GameTooltip:Hide() end)
   rows[i] = row
   return row
 end
@@ -502,7 +617,7 @@ function Render()
       end
       local color = isCurrent and "|cffffd100" or (e.status == "done" and "|cffa8c8ac" or (e.status == "locked" and "|cffb4b4b4" or "|cffffffff"))
       local lvl = e.level and e.level > 0 and ("|cff9d9d9d[" .. e.level .. "]|r ") or ""
-      row.name:SetText(lvl .. color .. e.name .. "|r")
+      row.name:SetText(lvl .. color .. e.name .. "|r  |cff808080#" .. e.id .. "|r")
       if #sub > 0 then row.sub:SetText(table.concat(sub, "  ·  ")); row.sub:Show() end
       if whereText then
         row.where:ClearAllPoints(); row.where:SetPoint("TOPLEFT", 46, -(21 + subH))
@@ -657,6 +772,8 @@ local function Create()
   f:SetScript("OnEvent", function() box:ClearFocus() end)
   -- A click anywhere else takes the typing focus off the search box, or WASD would type into it.
   f:SetScript("OnMouseDown", function() box:ClearFocus() end)
+  -- Closing the window ends any hover, so the key listener and the link box go with it.
+  f:SetScript("OnHide", function() hoverRow = nil; ListenForKeys(false); HideLink() end)
   f:Hide()
   frame = f
   return f
