@@ -135,6 +135,14 @@ function Data.RepeatableDone(id)
   return Data.IsDone(id) or JourneyHas(id)
 end
 
+-- nil for a normal quest; for a repeatable one { done = completed at least once, count = turn-ins seen by
+-- QuestThread (0 when it only knows it was done, e.g. from Questie's journey) }.
+function Data.RepeatInfo(id)
+  if not Data.IsRepeatable(id) then return nil end
+  local seen = QuestThreadDB and QuestThreadDB.turnedIn
+  return { done = Data.RepeatableDone(id), count = seen and seen[id] or 0 }
+end
+
 -- Called on QUEST_TURNED_IN; only repeatable quests are remembered.
 function Data.RecordTurnIn(id)
   if type(id) ~= "number" or not Data.IsRepeatable(id) then return end

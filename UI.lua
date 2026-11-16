@@ -203,6 +203,14 @@ local function ShowQuestTip(row)
   if lv then GameTooltip:AddLine(lv, 0.8, 0.8, 0.8) end
   local st = STATUS_TEXT[e.status]
   if st then GameTooltip:AddLine(st[1], st[2], st[3], st[4]) end
+  local rep = Data.RepeatInfo(e.id)
+  if rep then
+    if rep.done then
+      GameTooltip:AddLine("Repeatable, completed " .. (rep.count > 1 and (rep.count .. " times") or (rep.count == 1 and "once" or "at least once")), 0.44, 0.88, 0.44)
+    else
+      GameTooltip:AddLine("Repeatable", 0.6, 0.63, 0.66)
+    end
+  end
   for _, line in ipairs(e.unmet or {}) do GameTooltip:AddLine(line, 1, 0.5, 0.5, true) end
   if type(e.objective) == "table" and #e.objective > 0 then
     GameTooltip:AddLine(" ")
@@ -391,7 +399,7 @@ local function GetRow(i)
   row.status:SetPoint("TOPLEFT", 24, -5)
   row.status:Hide()
   row.name = Text(row, "GameFontHighlight")
-  row.name:SetPoint("TOPLEFT", 46, -5); row.name:SetWidth(CONTENT_W - 46 - 112)
+  row.name:SetPoint("TOPLEFT", 46, -5); row.name:SetWidth(CONTENT_W - 46 - 84)
   row.sub = Text(row, "GameFontNormalSmall")
   row.sub:SetPoint("TOPLEFT", 46, -21); row.sub:SetWidth(CONTENT_W - 46 - 8)
   row.sub:Hide()
@@ -468,7 +476,7 @@ local function PlaceRow(n, y, h)
   row.xp:SetText(""); row.num:SetText(""); row.name:SetText("")
   row.status:Hide(); row.sub:SetText(""); row.sub:Hide(); row.where:SetText(""); row.where:Hide()
   -- Rows are reused: the summary and result rows move the name, so put it back for a chain row.
-  row.name:ClearAllPoints(); row.name:SetPoint("TOPLEFT", 46, -5); row.name:SetWidth(CONTENT_W - 46 - 112)
+  row.name:ClearAllPoints(); row.name:SetPoint("TOPLEFT", 46, -5); row.name:SetWidth(CONTENT_W - 46 - 84)
   return row
 end
 
@@ -617,7 +625,18 @@ function Render()
       end
       local color = isCurrent and "|cffffd100" or (e.status == "done" and "|cffa8c8ac" or (e.status == "locked" and "|cffb4b4b4" or "|cffffffff"))
       local lvl = e.level and e.level > 0 and ("|cff9d9d9d[" .. e.level .. "]|r ") or ""
-      row.name:SetText(lvl .. color .. e.name .. "|r  |cff808080#" .. e.id .. "|r")
+      -- A repeatable quest: its ID is green once done, and a tag says it repeats (and how often you did it).
+      local idColor, tag = "|cff808080", ""
+      local rep = Data.RepeatInfo(e.id)
+      if rep then
+        if rep.done then
+          idColor = "|cff4fe04f"
+          tag = "  |cff7be07bRepeatable · done" .. (rep.count > 0 and (" " .. rep.count .. "x") or "") .. "|r"
+        else
+          tag = "  |cff9aa0a8Repeatable|r"
+        end
+      end
+      row.name:SetText(lvl .. color .. e.name .. "|r  " .. idColor .. "#" .. e.id .. "|r" .. tag)
       if #sub > 0 then row.sub:SetText(table.concat(sub, "  ·  ")); row.sub:Show() end
       if whereText then
         row.where:ClearAllPoints(); row.where:SetPoint("TOPLEFT", 46, -(21 + subH))

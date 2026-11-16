@@ -278,7 +278,7 @@ function(quests, items)
     nextQuestInChain = ent(quests, "next"), breadcrumbForQuestId = ent(quests, "bcFor"), breadcrumbs = ent(quests, "bcs"),
     name = ent(quests, "name"), reputationReward = ent(quests, "rep"),
     questLevel = function(id) return 30 end,
-    specialFlags = function(id) if id == 500 or id == 504 then return 1 end return 0 end,
+    specialFlags = function(id) if id == 500 or id == 504 or id == 166 then return 1 end return 0 end,
     requiredLevel = ent(quests, "reqLevel"),
     objectivesText = function(id) if id == 166 then return { "Kill things." } end end,
     startedBy = function(id) return { { 1000 } } end,
@@ -683,6 +683,35 @@ G.QuestID.QuestFrame.UpdateColor(G.QuestID.QuestFrame)
 check("QuestID's text is left alone for a repeatable never done", fake_text._color is None)
 G.QuestID = None
 G.testQid = 0
+
+# ---- repeatable quests in the chain window ----
+def chain_row(qid):
+    return next(f for f in G.stubs.values() if f._shown and f.entry is not None and f.entry.id == qid)
+
+
+G.SlashCmdList["QUESTTHREAD"]("166")
+r166 = chain_row(166)
+check("a repeatable quest never done is tagged Repeatable, with a grey id", "Repeatable" in r166.name._text and "|cff808080#166" in r166.name._text and "done" not in r166.name._text, r166.name._text)
+other = next(f for f in G.stubs.values() if f._shown and f.entry is not None and f.entry.id != 166)
+check("a normal quest gets no Repeatable tag", "Repeatable" not in other.name._text, other.name._text)
+G.tipLines = lua.table()
+r166._scripts["OnEnter"](r166)
+check("the tooltip says it is repeatable", "Repeatable" in list(G.tipLines.values()), list(G.tipLines.values())[:5])
+D.RecordTurnIn(166)
+D.RecordTurnIn(166)
+G.SlashCmdList["QUESTTHREAD"]("166")
+r166 = chain_row(166)
+check("a repeatable quest done twice says so and its id is green", "Repeatable · done 2x" in r166.name._text and "|cff4fe04f#166" in r166.name._text, r166.name._text)
+G.tipLines = lua.table()
+r166._scripts["OnEnter"](r166)
+check("the tooltip says how often it was completed", "Repeatable, completed 2 times" in list(G.tipLines.values()), list(G.tipLines.values())[:5])
+G.QuestThreadDB.turnedIn[166] = None
+G.Questie = lua.eval("{ db = { char = { journey = { { Event = 'Quest', SubType = 'Complete', Quest = 166 } } } } }")
+G.SlashCmdList["QUESTTHREAD"]("166")
+r166 = chain_row(166)
+check("done according to Questie's journey only: no count", "Repeatable · done" in r166.name._text and "x" not in r166.name._text.split("done")[1].split("|")[0], r166.name._text)
+G.Questie = None
+G.QuestThreadDB.turnedIn = None
 
 # ---- where a quest's objectives happen ----
 def lookups():
