@@ -16,6 +16,9 @@ Built for **WoW Forever** (client interface 16001).
 - **Quest log:** every quest in the list has a small round chain-link button next to its tracking checkbox
   (or next to its "(Dungeon)" tag). In a quest's detail view the button sits beside the Back button
   (Shift-drag to move it).
+- **Minimap:** a chain button on the minimap opens and closes the window (on the quest open in your log, if
+  there is one). Drag it to move it around the minimap. Right-click it and choose "Hide minimap button" to turn it off
+  (the chat then tells you how to get it back); `/qthread minimap` hides or shows it.
 - **Map:** hover a Questie quest icon on the world map or minimap and **Ctrl+click** it. This works for
   quests you haven't picked up yet.
 - **Search:** `/qthread` opens the window; type part of a quest name, an ID or a quest link in its box (or
@@ -58,7 +61,8 @@ While the window is open it follows whichever quest you open in the quest log. E
 - `/qthread` (or `/questthread`): open or close the window
 - `/qthread <part of a name | ID | quest link>`: look a quest up
 - `/qthread scale 1.2`: window size (0.6 to 1.6)
-- `/qthread reset`: window back to the middle of the screen, normal size, and the quest-log button to its place
+- `/qthread minimap`: hide or show the minimap button
+- `/qthread reset`: window back to the middle of the screen, normal size, and the buttons (quest log, minimap) to their places
 - `/qthread xpcheck`: compare the XP estimate with the client for every quest in your log
 
 ## How XP is worked out

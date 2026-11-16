@@ -411,4 +411,38 @@ function Core.QuestUrl(id)
   return ("https://www.wowhead.com/forever/quest=%d"):format(id)
 end
 
+-- Where a minimap button sits on a ring around the minimap, `angle` radians from the minimap's centre
+-- (0 = right, pi/2 = up). Offsets from the centre, for a minimap `w` x `h`. Round minimaps use a
+-- circle; square and cornered ones (as GetMinimapShape reports) keep the button on the edge, the same
+-- rule the usual minimap-button libraries use. A quadrant is true when the minimap is round there.
+local ROUND = { true, true, true, true } -- quadrants: 1 = lower right, 2 = lower left, 3 = upper right, 4 = upper left
+local SHAPES = {
+  ROUND = ROUND,
+  SQUARE = { false, false, false, false },
+  ["CORNER-TOPLEFT"] = { false, false, false, true },
+  ["CORNER-TOPRIGHT"] = { false, false, true, false },
+  ["CORNER-BOTTOMLEFT"] = { false, true, false, false },
+  ["CORNER-BOTTOMRIGHT"] = { true, false, false, false },
+  ["SIDE-LEFT"] = { false, true, false, true },
+  ["SIDE-RIGHT"] = { true, false, true, false },
+  ["SIDE-TOP"] = { false, false, true, true },
+  ["SIDE-BOTTOM"] = { true, true, false, false },
+  ["TRICORNER-TOPLEFT"] = { false, true, true, true },
+  ["TRICORNER-TOPRIGHT"] = { true, false, true, true },
+  ["TRICORNER-BOTTOMLEFT"] = { true, true, false, true },
+  ["TRICORNER-BOTTOMRIGHT"] = { true, true, true, false },
+}
+
+function Core.MinimapOffset(angle, w, h, shape)
+  local x, y = math.cos(angle), math.sin(angle)
+  local q = 1
+  if x < 0 then q = q + 1 end
+  if y > 0 then q = q + 2 end
+  local round = (SHAPES[shape] or ROUND)[q]
+  local hw, hh = w / 2 + 5, h / 2 + 5
+  if round then return x * hw, y * hh end
+  local dw, dh = math.sqrt(2 * hw * hw) - 10, math.sqrt(2 * hh * hh) - 10
+  return math.max(-hw, math.min(x * dw, hw)), math.max(-hh, math.min(y * dh, hh))
+end
+
 return Core

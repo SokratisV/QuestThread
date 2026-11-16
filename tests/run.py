@@ -202,6 +202,15 @@ function(quests, items)
   end
   _G.QuestScrollFrame = { ScrollBox = { ForEachFrame = function(self, fn) for _, r in ipairs(testRows) do fn(r) end end } }
   _G.UIParent = stub()
+  _G.Minimap = stub()
+  Minimap._mark = "minimap"
+  Minimap.GetWidth = function() return 140 end
+  Minimap.GetHeight = function() return 140 end
+  Minimap.GetCenter = function() return 500, 500 end
+  Minimap.GetEffectiveScale = function() return 1 end
+  _G.testCursor, _G.testShape = { 500, 500 }, nil
+  _G.GetCursorPosition = function() return testCursor[1], testCursor[2] end
+  _G.GetMinimapShape = function() return testShape end
   _G.tipLines = {}
   _G.GameTooltip = stub()
   GameTooltip.AddLine = function(_, text) tipLines[#tipLines + 1] = text end
@@ -312,7 +321,7 @@ env(to_lua_quests(), lua.table_from({int(k): lua.table_from(v) for k, v in raw["
 xp_lua = lua.table_from({int(k): lua.table_from(v) for k, v in raw["xp"].items()})
 lua.globals().LibQuestieDB.Support.Get = lua.eval("function(t) return function(name) if name == 'QuestXP' then return { db = t } end; if name == 'ZoneDB' then return { private = { areaIdToUiMapId = { [12] = 1429 } } } end end end")(xp_lua)
 ns2 = lua.table()
-for fn in ("Core.lua", "Data.lua", "UI.lua", "QuestFrame.lua", "Main.lua"):
+for fn in ("Core.lua", "Data.lua", "UI.lua", "QuestFrame.lua", "MinimapButton.lua", "Main.lua"):
     loader(source(fn), fn, ns2)
 
 G = lua.globals()
@@ -370,7 +379,7 @@ for f in G.stubs.values():
     fn = f._scripts["OnEvent"]
     if fn is not None:
         fn(f, "PLAYER_LOGIN")
-button = next((f for f in G.stubs.values() if f._scripts["OnClick"] is not None and f._scripts["OnDragStart"] is not None), None)
+button = next((f for f in G.stubs.values() if f._scripts["OnClick"] is not None and f._scripts["OnDragStart"] is not None and f._name is None), None)
 check("quest log button is created", button is not None)
 check("quest log hook is a secure post-hook", G.hooks["QuestMapFrame_ShowQuestDetails"] is not None)
 win = frame_named("QuestThreadFrame")
@@ -384,6 +393,120 @@ win._shown = False
 G.hooks["QuestMapFrame_ShowQuestDetails"](166)
 check("follow hook does not open a closed window", not win._shown)
 G.testDetail = None
+
+# ---- minimap button ----
+import math
+
+
+def near(a, b, tol=0.01):
+    return a is not None and abs(a - b) <= tol
+
+
+x, y = Core.MinimapOffset(0, 140, 140, "ROUND")
+check("minimap offset: round, angle 0 is straight right, 5 px outside the edge", near(x, 75) and near(y, 0), (x, y))
+x, y = Core.MinimapOffset(math.pi / 2, 140, 140, None)
+check("minimap offset: no shape means round; pi/2 is straight up", near(x, 0) and near(y, 75), (x, y))
+x, y = Core.MinimapOffset(math.pi / 4, 140, 140, "ROUND")
+check("minimap offset: round keeps the diagonal on the circle", near(x, 75 * math.cos(math.pi / 4)) and near(y, x), (x, y))
+x, y = Core.MinimapOffset(math.pi / 4, 140, 140, "SQUARE")
+check("minimap offset: a square minimap pushes the diagonal out to the corner", near(x, 67.9, 0.1) and near(y, x), (x, y))
+x, y = Core.MinimapOffset(0, 140, 140, "SQUARE")
+check("minimap offset: square, straight right is clamped to the edge", near(x, 75) and near(y, 0), (x, y))
+x, y = Core.MinimapOffset(math.radians(225), 140, 140, "CORNER-BOTTOMLEFT")
+check("minimap offset: CORNER-BOTTOMLEFT is round only in the lower left",
+      near(x, 75 * math.cos(math.radians(225))) and near(y, x), (x, y))
+x, y = Core.MinimapOffset(math.pi / 4, 140, 140, "CORNER-BOTTOMLEFT")
+check("minimap offset: ...and square in the other three quadrants", near(x, 67.9, 0.1) and near(y, x), (x, y))
+x, y = Core.MinimapOffset(math.pi / 2, 200, 100, "ROUND")
+check("minimap offset: a non-square minimap scales each axis", near(x, 0) and near(y, 55), (x, y))
+
+mb = frame_named("QuestThreadMinimapButton")
+check("minimap button is created at login", mb is not None and mb._shown is True)
+check("minimap button: default spot is on the ring, lower left",
+      mb._pt[1] == "CENTER" and mb._pt[2]._mark == "minimap" and near(mb._pt[4], 75 * math.cos(math.radians(215))) and near(mb._pt[5], 75 * math.sin(math.radians(215))), mb._pt)
+check("minimap button: placed above the minimap's own level", mb._lvl is not None and mb._lvl > 1, mb._lvl)
+win._shown = False
+G.testDetail = None
+mb._scripts["OnClick"](mb)
+check("minimap button opens the window", win._shown)
+mb._scripts["OnClick"](mb)
+check("minimap button closes the window again", not win._shown)
+G.testDetail = 166
+mb._scripts["OnClick"](mb)
+check("minimap button opens the quest that is open in the quest log",
+      win._shown and any(f._text == "The Defias Brotherhood" for f in G.stubs.values()))
+mb._scripts["OnClick"](mb)
+check("minimap button closes the window even with a quest open in the log", not win._shown)
+G.testDetail = None
+win._shown = False
+G.GameTooltip.AddLine = lua.eval("function(_, text) tipLines[#tipLines + 1] = text end")
+G.tipLines = lua.table()
+mb._scripts["OnEnter"](mb)
+check("minimap button tooltip explains the click and the drag", any("Left-click" in t for t in G.tipLines.values()) and any("Drag" in t for t in G.tipLines.values()), list(G.tipLines.values()))
+# dragging: the button follows the cursor's direction from the minimap's centre, and the spot is saved
+mb._scripts["OnDragStart"](mb)
+check("dragging starts following the cursor", mb._scripts["OnUpdate"] is not None)
+G.testCursor = lua.table_from([500, 600])
+mb._scripts["OnUpdate"](mb, 0.016)
+check("drag: cursor straight above puts the button at the top", near(mb._pt[4], 0, 0.1) and near(mb._pt[5], 75, 0.1), mb._pt)
+G.testCursor = lua.table_from([400, 500])
+mb._scripts["OnDragStop"](mb)
+check("drag stop: the button is where the cursor was, and stops following",
+      mb._scripts["OnUpdate"] is None and near(mb._pt[4], -75, 0.1) and near(mb._pt[5], 0, 0.1), mb._pt)
+check("the spot is saved", near(G.QuestThreadDB.minimap.angle, math.pi, 0.001) or near(abs(G.QuestThreadDB.minimap.angle), math.pi, 0.001), G.QuestThreadDB.minimap.angle)
+G.testShape = "SQUARE"
+G.testCursor = lua.table_from([600, 600])
+mb._scripts["OnDragStart"](mb)
+mb._scripts["OnUpdate"](mb, 0.016)
+mb._scripts["OnDragStop"](mb)
+check("a square minimap puts the diagonal at its corner", near(mb._pt[4], 67.9, 0.1) and near(mb._pt[5], 67.9, 0.1), mb._pt)
+G.testShape = None
+# right-click menu on the minimap button
+check("tooltip mentions the right-click", any("Right-click" in t for t in G.tipLines.values()), list(G.tipLines.values()))
+check("no menu until it is asked for", frame_named("QuestThreadMinimapMenu") is None)
+mb._scripts["OnClick"](mb, "RightButton")
+menu = frame_named("QuestThreadMinimapMenu")
+check("right-click opens a menu under the button", menu is not None and menu._shown is True and menu._pt[1] == "TOPRIGHT")
+check("the menu is closable with Escape", "QuestThreadMinimapMenu" in list(G.UISpecialFrames.values()))
+check("right-click does not open the chain window", not win._shown)
+mb._scripts["OnClick"](mb, "RightButton")
+check("right-click again closes the menu", menu._shown is False)
+mb._scripts["OnClick"](mb, "RightButton")
+G.testMouse = True
+menu._scripts["OnUpdate"](menu, 0.016)
+check("a click elsewhere closes the menu", menu._shown is False)
+mb._scripts["OnClick"](mb, "RightButton")
+menu.IsMouseOver = lua.eval("function() return true end")
+menu._scripts["OnUpdate"](menu, 0.016)
+check("a click on the menu itself leaves it for its own handler", menu._shown is True)
+menu.IsMouseOver = None
+G.testMouse = False
+mb._scripts["OnDragStart"](mb)
+check("dragging the button closes the menu", menu._shown is False)
+mb._scripts["OnDragStop"](mb)
+mb._scripts["OnClick"](mb, "RightButton")
+mb._scripts["OnClick"](mb, "LeftButton")
+check("a left click closes the menu and opens the window", menu._shown is False and win._shown)
+win._shown = False
+mb._scripts["OnClick"](mb, "RightButton")
+G.printed = lua.table()
+menu.item._scripts["OnClick"](menu.item)
+check("the menu item hides the button and remembers it", mb._shown is False and menu._shown is False and G.QuestThreadDB.minimap.hide is True)
+check("hiding says how to show it again", any("/qthread minimap" in p and "show it again" in p for p in G.printed.values()), list(G.printed.values()))
+G.SlashCmdList["QUESTTHREAD"]("minimap")
+check("the slash command brings it back after hiding from the menu", mb._shown is True and not G.QuestThreadDB.minimap.hide)
+
+# hide / show / reset
+G.SlashCmdList["QUESTTHREAD"]("minimap")
+check("/qthread minimap hides the button and remembers it", mb._shown is False and G.QuestThreadDB.minimap.hide is True)
+G.SlashCmdList["QUESTTHREAD"]("minimap")
+check("/qthread minimap shows it again", mb._shown is True and not G.QuestThreadDB.minimap.hide)
+G.SlashCmdList["QUESTTHREAD"]("minimap")
+G.SlashCmdList["QUESTTHREAD"]("reset")
+check("/qthread reset brings the button back to its default spot, shown",
+      mb._shown is True and G.QuestThreadDB.minimap.angle is None and not G.QuestThreadDB.minimap.hide
+      and near(mb._pt[4], 75 * math.cos(math.radians(215))), (mb._shown, mb._pt))
+win._shown = False
 
 
 def tick():

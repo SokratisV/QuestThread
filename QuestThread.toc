@@ -1,8 +1,8 @@
 ## Interface: 16001
 ## Title: QuestThread
-## Notes: See a quest's whole chain with status, total XP, reputation and item rewards, from QuestieDB. Chain button in the quest log, Ctrl+click a Questie map icon, or /qthread.
+## Notes: See a quest's whole chain with status, total XP, reputation and item rewards, from QuestieDB. Chain button in the quest log or on the minimap, Ctrl+click a Questie map icon, or /qthread.
 ## Author: Sokratis
-## Version: 1.0.4
+## Version: 1.0.5
 ## Category: Quests
 ## X-License: MIT
 ## IconTexture: Interface\AddOns\QuestThread\Chain.tga
@@ -14,4 +14,5 @@ Core.lua
 Data.lua
 UI.lua
 QuestFrame.lua
+MinimapButton.lua
 Main.lua

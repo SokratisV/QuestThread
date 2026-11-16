@@ -21,9 +21,9 @@ end
 
 -- Looks like a stock WoW minimap button: round gold ring, dark disc, chain icon, round glow on hover.
 -- (Blizzard's own textures; sizes follow the standard 31-px minimap button, scaled to w.)
-local function MakeChainButton(parent, w, h)
+local function MakeChainButton(parent, w, h, name)
   local s = w / 31
-  local b = CreateFrame("Button", nil, parent)
+  local b = CreateFrame("Button", name, parent)
   b:SetSize(w, h)
   b.bg = b:CreateTexture(nil, "BACKGROUND")
   b.bg:SetTexture("Interface\\Minimap\\UI-Minimap-Background")
@@ -284,6 +284,14 @@ local function StartIconWatch()
   end)
 end
 
+-- What a click on the minimap button does: close the window if it is up; otherwise open it on the quest
+-- that is open in the quest log, or empty (ready for a search).
+local function ToggleWindow()
+  if UI.IsShown() then return UI.Toggle() end
+  local q = DetailQuest()
+  if q then UI.Open(q) else UI.Toggle() end
+end
+
 -- ---- slash command ----
 SLASH_QUESTTHREAD1 = "/qthread"
 SLASH_QUESTTHREAD2 = "/questthread"
@@ -293,11 +301,14 @@ SlashCmdList["QUESTTHREAD"] = function(msg)
     DB().button = nil
     if detailButton then PlaceDetailButton() end
     Say("Detail-view button moved back to its default place.")
+  elseif msg == "minimap" then
+    Say(ns.MinimapButton.Toggle() and "Minimap button shown." or "Minimap button hidden. Type /qthread minimap to show it again.")
   elseif msg == "reset" then
     UI.Reset()
     DB().button = nil
+    ns.MinimapButton.Reset()
     if detailButton then PlaceDetailButton() end
-    Say("Window and button put back (centre of the screen, normal size).")
+    Say("Window and buttons put back (centre of the screen, normal size).")
   elseif msg:match("^scale") then
     local v = tonumber(msg:match("^scale%s+([%d%.]+)"))
     if v then Say(("Window scale set to %.2f."):format(UI.SetScale(v))) else Say("Usage: /qthread scale 1.2 (from 0.6 to 1.6)") end
@@ -328,6 +339,7 @@ ev:SetScript("OnEvent", function(_, event, name)
     if not ok then Say(why or "QuestieDB is incompatible.") return end
     StartIconWatch()
     ns.QuestFrame.Init()
+    ns.MinimapButton.Init(ToggleWindow)
   end
   if event == "ADDON_LOADED" and name ~= "Blizzard_WorldMap" and name ~= "Blizzard_QuestMap" then return end
   HookQuestLog()
