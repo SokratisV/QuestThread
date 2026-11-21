@@ -96,6 +96,20 @@ local function ItemIcon(id)
   return icon or 134400
 end
 
+-- The bread icon (Tough Hunk of Bread, item 4540) marks a breadcrumb quest. It goes into text as an
+-- inline texture; "" when the client has no icon for it (the "Breadcrumb" / "Lead-in" word still says it).
+local CRUMB_ITEM = 4540
+local function CrumbIcon()
+  local icon = C_Item and C_Item.GetItemIconByID and C_Item.GetItemIconByID(CRUMB_ITEM)
+  if not icon and GetItemIcon then icon = GetItemIcon(CRUMB_ITEM) end
+  return icon and ("|T" .. icon .. ":14:14:0:-1|t ") or ""
+end
+
+-- The icon in front of a quest's name when it is a breadcrumb, else "".
+local function Crumb(id)
+  return Data.IsBreadcrumb(id) and CrumbIcon() or ""
+end
+
 local function GetIconButton(parent)
   for _, b in ipairs(iconPool) do
     if not b.inUse then b.inUse = true; b:SetParent(parent); b:Show(); return b end
@@ -189,7 +203,8 @@ local function ShowQuestTip(row)
     -- A row of the search / pick list: just the name, the id and the link shortcut.
     if row.questId then
       GameTooltip:SetOwner(row, "ANCHOR_RIGHT")
-      GameTooltip:AddLine(Data.Name(row.questId) or ("Quest " .. row.questId), 1, 0.82, 0)
+      GameTooltip:AddLine(Crumb(row.questId) .. (Data.Name(row.questId) or ("Quest " .. row.questId)), 1, 0.82, 0)
+      if Data.IsBreadcrumb(row.questId) then GameTooltip:AddLine("Breadcrumb quest (optional)", 0.88, 0.65, 0.29) end
       GameTooltip:AddLine("Quest #" .. row.questId, 0.8, 0.8, 0.8)
       GameTooltip:AddLine("Ctrl+C: copy the Wowhead link", 0.6, 0.6, 0.6)
       GameTooltip:Show()
@@ -197,7 +212,13 @@ local function ShowQuestTip(row)
     return
   end
   GameTooltip:SetOwner(row, "ANCHOR_RIGHT")
-  GameTooltip:AddLine(e.name, 1, 0.82, 0)
+  GameTooltip:AddLine(Crumb(e.id) .. e.name, 1, 0.82, 0)
+  local leadsTo = e.leadsTo or (Data.IsBreadcrumb(e.id) and Data.BreadcrumbTarget(e.id)) or nil
+  if leadsTo then
+    GameTooltip:AddLine("Breadcrumb quest: optional lead-in to " .. (Data.Name(leadsTo) or ("quest " .. leadsTo)), 0.88, 0.65, 0.29)
+  elseif Data.IsBreadcrumb(e.id) then
+    GameTooltip:AddLine("Breadcrumb quest (optional)", 0.88, 0.65, 0.29)
+  end
   local lv = e.level and e.level > 0 and ("Level " .. e.level) or nil
   if e.reqLevel and e.reqLevel > 0 then lv = (lv and (lv .. " · ") or "") .. "requires level " .. e.reqLevel end
   if lv then GameTooltip:AddLine(lv, 0.8, 0.8, 0.8) end
@@ -420,11 +441,11 @@ local function GetRow(i)
     elseif not current and results then
       -- Picked from a list: remember it so Back returns there.
       local saved = { results = results, notice = notice }
-      UI.Open(self.questId)
+      UI.Open(self.questId, false, true)
       backTo = saved
       Render()
     else
-      UI.Open(self.questId, true) -- inside a chain the list (if any) stays one Back away
+      UI.Open(self.questId, true, true) -- inside a chain the list (if any) stays one Back away
     end
   end)
   row:SetScript("OnEnter", function(self) Hover(self); ShowQuestTip(self) end)
@@ -475,14 +496,238 @@ local function PlaceRow(n, y, h)
   row.rep:Hide(); row.rep:SetWordWrap(false); row.rep:SetWidth(CONTENT_W - 40)
   row.xp:SetText(""); row.num:SetText(""); row.name:SetText("")
   row.status:Hide(); row.sub:SetText(""); row.sub:Hide(); row.where:SetText(""); row.where:Hide()
-  -- Rows are reused: the summary and result rows move the name, so put it back for a chain row.
+  -- Rows are reused: the summary and result rows move the name, and a lead-in row indents everything.
   row.name:ClearAllPoints(); row.name:SetPoint("TOPLEFT", 46, -5); row.name:SetWidth(CONTENT_W - 46 - 84)
+  row.status:ClearAllPoints(); row.status:SetPoint("TOPLEFT", 24, -5)
+  row.sub:ClearAllPoints(); row.sub:SetPoint("TOPLEFT", 46, -21)
+  row.where:ClearAllPoints(); row.where:SetPoint("TOPLEFT", 46, -21)
+  row.bar:SetVertexColor(BRONZE_LIT[1], BRONZE_LIT[2], BRONZE_LIT[3], 1)
   return row
+end
+
+-- ---- the objectives popup, beside the window ----
+-- Opens when you click a quest and follows the quest you clicked. QuestieDB says which creatures, objects
+-- and items a quest needs and where they are, but not how many: the counts come from your quest log
+-- (Data.LiveObjectives), so they show once the quest is in it.
+local POP_W = 310
+local popup, popupFor
+
+local function Head(text) return "|cffffd100" .. text .. "|r" end
+
+-- The popup is a column of pieces: blocks of text, and one hoverable row per item to collect (its icon,
+-- name and where it drops; hovering shows the item's own game tooltip).
+local function ObjectivePieces(id)
+  local pieces, buf = {}, {}
+  local function add(s) buf[#buf + 1] = s end
+  local function flush()
+    if #buf > 0 then pieces[#pieces + 1] = { text = table.concat(buf, "\n") }; buf = {} end
+  end
+  local info = Data.Info(id)
+  if type(info.objective) == "table" and #info.objective > 0 then
+    add(Head("What to do"))
+    for _, line in ipairs(info.objective) do add("|cffffffff" .. line .. "|r") end
+    add(" ")
+  end
+  local live = Data.LiveObjectives(id)
+  if #live > 0 then
+    add(Head("Your progress"))
+    for _, o in ipairs(live) do add((o.done and "|cff66e066" or "|cffffffff") .. o.text .. "|r") end
+    add(" ")
+  end
+  local where = Data.Where(id)
+  if #where.objs > 0 then
+    add(Head("Targets"))
+    for i, o in ipairs(where.objs) do
+      if i > 8 then add("|cff9aa0a8…and " .. (#where.objs - 8) .. " more|r"); break end
+      local detail = {}
+      if o.kind == "item" and #o.from > 0 then
+        detail[#detail + 1] = "from " .. table.concat(o.from, ", ") .. (o.sources > #o.from and " and others" or "")
+      end
+      if #o.areas > 0 then detail[#detail + 1] = ZoneList(o.areas, 3) end
+      local detailText = #detail > 0 and ("|cff8fb4c8" .. table.concat(detail, " · ") .. "|r") or nil
+      local line = "|cffffffff" .. KIND_VERB[o.kind] .. " " .. o.name .. "|r"
+      if o.kind == "item" and o.id then
+        flush()
+        pieces[#pieces + 1] = { item = o.id, name = line, detail = detailText }
+      else
+        add(line)
+        if detailText then add("   " .. detailText) end
+      end
+    end
+    if #live == 0 then add("|cff9aa0a8How many you need shows here once the quest is in your quest log.|r") end
+    add(" ")
+  end
+  -- Rewards: XP (the client's exact figure when the quest is in your log), reputation, and the items.
+  local level = UnitLevel and UnitLevel("player") or 0
+  local exact = Data.ClientXp(id)
+  local maxed = GetMaxPlayerLevel and level >= GetMaxPlayerLevel()
+  local xp = exact or (maxed and 0 or Core.ScaledXp(info.xpBase, info.xpLevel, level))
+  local rewardItems = Data.index.rewards[id] or {}
+  local reps = {}
+  for _, pair in ipairs(info.rep or {}) do
+    if pair[1] and pair[2] then reps[#reps + 1] = "|cffffffff" .. Data.FactionName(pair[1]) .. " " .. (pair[2] >= 0 and "+" or "") .. pair[2] .. "|r" end
+  end
+  if xp > 0 or #reps > 0 or #rewardItems > 0 then
+    add(Head("Rewards"))
+    if xp > 0 then add("|cffffffff" .. (exact and "" or "~") .. Num(xp) .. " XP|r") end
+    for _, line in ipairs(reps) do add(line) end
+    flush()
+    for _, itemId in ipairs(rewardItems) do
+      pieces[#pieces + 1] = { item = itemId, name = (Data.ItemColor(itemId) or "|cffffffff") .. Data.ItemName(itemId) .. "|r" }
+    end
+    add(" ")
+  end
+  for _, which in ipairs({ "start", "end" }) do
+    local g = Data.Givers(id, which)[1]
+    if g then
+      local place = Data.Locate(g, id)
+      add(Head(which == "start" and "Starts" or "Hand in") .. "  |cffffffff" .. g.name .. "|r" ..
+        (place and ("\n   |cff8fb4c8" .. Data.PlaceText(place) .. "|r") or ""))
+    end
+  end
+  while buf[#buf] == " " do buf[#buf] = nil end
+  flush()
+  if #pieces == 0 then pieces[1] = { text = "|cff9aa0a8QuestieDB has no objective details for this quest.|r" } end
+  return pieces
+end
+
+-- Beside the window on the right, or on the left when there is no room.
+local function PlacePopup()
+  if not (popup and frame) then return end
+  popup:ClearAllPoints()
+  local right, uiRight = frame:GetRight(), UIParent:GetRight()
+  local s, us = frame:GetEffectiveScale(), UIParent:GetEffectiveScale()
+  local fits = not (right and uiRight and s and us) or (right * s + (POP_W + 4) * s <= uiRight * us)
+  if fits then
+    popup:SetPoint("TOPLEFT", frame, "TOPRIGHT", 4, 0)
+  else
+    popup:SetPoint("TOPRIGHT", frame, "TOPLEFT", -4, 0)
+  end
+end
+
+local function BuildPopup()
+  popup = CreateFrame("Frame", "QuestThreadObjectives", frame, "BackdropTemplate")
+  popup:SetWidth(POP_W)
+  popup:EnableMouse(true)
+  Boxed(popup, true)
+  popup:SetBackdropColor(0.05, 0.05, 0.05, 0.95)
+  popup.title = Text(popup, "GameFontNormal")
+  popup.title:SetPoint("TOPLEFT", 14, -12); popup.title:SetWidth(POP_W - 56)
+  popup.sub = Text(popup, "GameFontHighlightSmall")
+  popup.sub:SetPoint("TOPLEFT", 14, -30); popup.sub:SetWidth(POP_W - 28)
+  local rule = Solid(popup, "BORDER", BRONZE_MUTED[1], BRONZE_MUTED[2], BRONZE_MUTED[3], 0.6)
+  rule:SetPoint("TOPLEFT", 14, -48); rule:SetPoint("TOPRIGHT", -14, -48); rule:SetHeight(1)
+  popup.textRows, popup.itemRows = {}, {}
+  local close = Button(popup, "X", 22, 22)
+  close:SetPoint("TOPRIGHT", -12, -10)
+  close:SetScript("OnClick", function() popupFor = nil; popup:Hide() end)
+  popup.close = close
+  popup:Hide()
+end
+
+local function TextPiece(i)
+  local fs = popup.textRows[i]
+  if not fs then
+    fs = Text(popup, "GameFontHighlightSmall")
+    fs:SetWordWrap(true)
+    fs:SetJustifyV("TOP")
+    fs:SetWidth(POP_W - 28)
+    popup.textRows[i] = fs
+  end
+  return fs
+end
+
+-- One item to collect: its icon, its line, and the item's own tooltip on hover.
+local function ItemPiece(i)
+  local b = popup.itemRows[i]
+  if b then return b end
+  local w = POP_W - 28
+  b = CreateFrame("Button", nil, popup)
+  b:SetWidth(w)
+  b.hl = Solid(b, "BACKGROUND", BRONZE_HOVER[1], BRONZE_HOVER[2], BRONZE_HOVER[3], 0.22)
+  b.hl:SetAllPoints(); b.hl:Hide()
+  b.rim = Solid(b, "BORDER", BRONZE[1], BRONZE[2], BRONZE[3], 1)
+  b.rim:SetSize(ICON, ICON); b.rim:SetPoint("TOPLEFT", 0, 0)
+  b.tex = b:CreateTexture(nil, "ARTWORK")
+  b.tex:SetSize(ICON - 2, ICON - 2); b.tex:SetPoint("TOPLEFT", 1, -1)
+  b.tex:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+  b.name = Text(b, "GameFontHighlightSmall")
+  b.name:SetPoint("TOPLEFT", ICON + 6, -1); b.name:SetWidth(w - ICON - 6)
+  b.detail = Text(b, "GameFontHighlightSmall")
+  b.detail:SetWordWrap(true)
+  b.detail:SetPoint("TOPLEFT", ICON + 6, -15); b.detail:SetWidth(w - ICON - 6)
+  b:SetScript("OnEnter", function(self)
+    self.hl:Show()
+    if not self.itemId then return end
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    GameTooltip:SetHyperlink("item:" .. self.itemId)
+    GameTooltip:Show()
+  end)
+  b:SetScript("OnLeave", function(self) self.hl:Hide(); GameTooltip:Hide() end)
+  popup.itemRows[i] = b
+  return b
+end
+
+local function TextHeight(fs, text)
+  local h = fs:GetStringHeight()
+  if type(h) == "number" and h > 0 then return h end
+  return (select(2, text:gsub("\n", "\n")) + 1) * 12 -- no measurement available
+end
+
+-- Stack the pieces down the popup and size it to fit.
+local function LayoutPopup(pieces)
+  for _, fs in ipairs(popup.textRows) do fs:Hide() end
+  for _, b in ipairs(popup.itemRows) do b:Hide() end
+  local y, nt, ni = 56, 0, 0
+  for _, p in ipairs(pieces) do
+    if p.item then
+      ni = ni + 1
+      local b = ItemPiece(ni)
+      b.itemId = p.item
+      b.hl:Hide()
+      b.tex:SetTexture(C_Item and C_Item.GetItemIconByID and C_Item.GetItemIconByID(p.item) or 134400)
+      b.name:SetText(p.name)
+      b.detail:SetText(p.detail or ""); b.detail:SetShown(p.detail ~= nil)
+      local h = math.max(ICON, 15 + (p.detail and TextHeight(b.detail, p.detail) or 0))
+      b:ClearAllPoints(); b:SetPoint("TOPLEFT", popup, "TOPLEFT", 14, -y)
+      b:SetHeight(h); b:Show()
+      y = y + h + 4
+    else
+      nt = nt + 1
+      local fs = TextPiece(nt)
+      fs:SetText(p.text)
+      fs:ClearAllPoints(); fs:SetPoint("TOPLEFT", popup, "TOPLEFT", 14, -y)
+      fs:Show()
+      y = y + TextHeight(fs, p.text) + 4
+    end
+  end
+  popup:SetHeight(y + 10)
+end
+
+local function ShowObjectives(id)
+  if not popup then BuildPopup() end
+  PlacePopup()
+  local name = Data.Name(id) or ("Quest " .. id)
+  popup.title:SetText(Crumb(id) .. "|cffffd100" .. name .. "|r")
+  local bits = {}
+  local lv = QuestDB.questLevel and QuestDB.questLevel(id)
+  if lv and lv > 0 then bits[#bits + 1] = "Level " .. lv end
+  local base = Data.Status(id) -- the same test the rows use for "in your log"
+  local state = (base == "done" or Data.RepeatableDone(id)) and "done" or base == "log" and "log" or "new"
+  bits[#bits + 1] = state == "done" and "|cff66cc66Completed|r" or state == "log" and "|cff8fc4ffIn your quest log|r" or "|cffcccccc#" .. id .. "|r"
+  if Data.IsBreadcrumb(id) then
+    local to = Data.BreadcrumbTarget(id)
+    bits[#bits + 1] = "|cffe0a64aBreadcrumb" .. (to and (" to " .. (Data.Name(to) or ("quest " .. to))) or "") .. "|r"
+  end
+  popup.sub:SetText(table.concat(bits, " · "))
+  LayoutPopup(ObjectivePieces(id))
+  popup:Show()
 end
 
 function Render()
   if not frame then return end
   frame.back:SetShown(current ~= nil and backTo ~= nil)
+  if popup then popup:Hide() end -- shown again at the end of a full chain render
   for _, row in ipairs(rows) do row:Hide(); ReleaseIcons(row) end
 
   if Data.state == "building" then
@@ -506,7 +751,7 @@ function Render()
       row.questId = hit.id
       local lv = QuestDB.questLevel and QuestDB.questLevel(hit.id)
       row.name:ClearAllPoints(); row.name:SetPoint("TOPLEFT", 4, -5); row.name:SetWidth(CONTENT_W - 10)
-      row.name:SetText((lv and lv > 0 and ("|cff9d9d9d[" .. lv .. "]|r ") or "") .. hit.name .. "  |cff808080#" .. hit.id .. "|r")
+      row.name:SetText((lv and lv > 0 and ("|cff9d9d9d[" .. lv .. "]|r ") or "") .. Crumb(hit.id) .. hit.name .. "  |cff808080#" .. hit.id .. "|r")
       y = y + 24
     end
     for i = #results + 1, #rows do rows[i]:Hide() end
@@ -636,7 +881,9 @@ function Render()
           tag = "  |cff9aa0a8Repeatable|r"
         end
       end
-      row.name:SetText(lvl .. color .. e.name .. "|r  " .. idColor .. "#" .. e.id .. "|r" .. tag)
+      -- A breadcrumb opened as a step of its own (normally they hang under the quest they lead into).
+      if Data.IsBreadcrumb(e.id) then tag = tag .. "  |cffe0a64aBreadcrumb|r" end
+      row.name:SetText(lvl .. Crumb(e.id) .. color .. e.name .. "|r  " .. idColor .. "#" .. e.id .. "|r" .. tag)
       if #sub > 0 then row.sub:SetText(table.concat(sub, "  ·  ")); row.sub:Show() end
       if whereText then
         row.where:ClearAllPoints(); row.where:SetPoint("TOPLEFT", 46, -(21 + subH))
@@ -649,20 +896,46 @@ function Render()
         row.hl:SetVertexColor(BRONZE_HOVER[1], BRONZE_HOVER[2], BRONZE_HOVER[3], 0.22); row.hl:Show(); row.bar:Show()
       end
       if hasItems then PlaceIcons(row, e.items, 46, -(24 + subH + whereH), 14) end
+      -- Lead-ins: optional quests that start this one earlier. They are not counted in the totals above.
+      for _, c in ipairs(e.crumbs or {}) do
+        local base = Data.Status(c.id)
+        c.status, c.unmet = Core.StatusOf(c, base == "done", base == "log", Data.IsDone, level, nameOf)
+        local over = (e.status == "done" or e.status == "log") and c.status ~= "done" and c.status ~= "log"
+        local cSub
+        if over then
+          cSub = "|cff9aa0a8No longer needed: you already have the quest it leads into|r"
+        elseif #c.unmet > 0 then
+          cSub = "|cffff8a8aNeeds: " .. table.concat(c.unmet, " · ") .. "|r"
+        else
+          cSub = "|cff9aa0a8Optional: leads into step " .. li .. "|r"
+        end
+        local cWhere = WhereText(c)
+        local crow = nextRow(28 + 12 + (cWhere and 12 or 0))
+        crow.questId, crow.entry = c.id, c
+        crow.num:SetText("»")
+        local cell = STATUS_CELL[c.status]
+        if cell then
+          crow.status:SetTexCoord(cell * 0.25, (cell + 1) * 0.25, 0, 1)
+          crow.status:ClearAllPoints(); crow.status:SetPoint("TOPLEFT", 38, -5)
+          crow.status:Show()
+        end
+        crow.name:ClearAllPoints(); crow.name:SetPoint("TOPLEFT", 60, -5); crow.name:SetWidth(CONTENT_W - 60 - 8)
+        local cLvl = c.level and c.level > 0 and ("|cff9d9d9d[" .. c.level .. "]|r ") or ""
+        local cColor = (over or c.status == "done") and "|cff8a9a8c" or (c.status == "locked" and "|cffb4b4b4" or "|cffffffff")
+        crow.name:SetText(cLvl .. Crumb(c.id) .. "|cffe0a64aLead-in|r  " .. cColor .. c.name .. "|r  |cff808080#" .. c.id .. "|r")
+        crow.sub:ClearAllPoints(); crow.sub:SetPoint("TOPLEFT", 60, -21)
+        crow.sub:SetText(cSub); crow.sub:Show()
+        if cWhere then
+          crow.where:ClearAllPoints(); crow.where:SetPoint("TOPLEFT", 60, -33)
+          crow.where:SetText(cWhere); crow.where:Show()
+        end
+        crow.bar:SetVertexColor(0.88, 0.65, 0.29, 0.8); crow.bar:Show()
+      end
     end
   end
   content:SetHeight(math.max(y, 1))
+  if popupFor then ShowObjectives(popupFor) end
 
-  if #chain.breadcrumbs > 0 then
-    local names = {}
-    for _, b in ipairs(chain.breadcrumbs) do names[#names + 1] = (Data.Name(b.id) or ("Quest " .. b.id)) .. " (#" .. b.id .. ")" end
-    local row = nextRow(36)
-    row.rep:SetText("Can also be reached through: " .. table.concat(names, ", "))
-    row.rep:SetWidth(CONTENT_W - 10)
-    row.rep:SetWordWrap(true)
-    row.rep:ClearAllPoints(); row.rep:SetPoint("TOPLEFT", 4, -6); row.rep:Show()
-    content:SetHeight(y)
-  end
   local target = currentY and math.max(0, currentY - 70) or 0
   local function scrollNow()
     local max = math.max(0, content:GetHeight() - scroll:GetHeight())
@@ -699,6 +972,7 @@ local function Create()
     self:StopMovingOrSizing()
     local p, _, rp, x, y = self:GetPoint()
     DB().pos = { p, rp, x, y }
+    PlacePopup() -- it may have run out of room on its side
   end)
   f:SetScale(DB().scale or 1)
   local pos = DB().pos
@@ -798,9 +1072,11 @@ local function Create()
   return f
 end
 
-function UI.Open(questId, keepBack)
+-- showObjectives: a click on a quest, which also opens the objectives popup for it.
+function UI.Open(questId, keepBack, showObjectives)
   Create()
   current = questId and tonumber(questId) or current
+  popupFor = showObjectives and current or nil
   notice, results = nil, nil
   if not keepBack then backTo = nil end
   frame:Show()
@@ -820,7 +1096,7 @@ function UI.OpenIds(ids)
     if a.name ~= b.name then return a.name < b.name end
     return a.id < b.id
   end)
-  current, results, notice, backTo = nil, hits, ("%d quests share that icon."):format(#ids), nil
+  current, results, notice, backTo, popupFor = nil, hits, ("%d quests share that icon."):format(#ids), nil, nil
   frame:Show()
   frame:Raise()
   Data.Ensure(Render)
@@ -831,7 +1107,7 @@ end
 function UI.OpenText(text)
   Create()
   local id, msg, hits = Data.Resolve(text)
-  backTo = nil
+  backTo, popupFor = nil, nil
   if not id then
     current, notice, results = nil, msg or "Enter a quest ID, link or name.", hits
   else
@@ -849,7 +1125,7 @@ end
 function UI.SetScale(v)
   v = math.min(1.6, math.max(0.6, tonumber(v) or 1))
   DB().scale = v
-  if frame then frame:SetScale(v) end
+  if frame then frame:SetScale(v); PlacePopup() end
   return v
 end
 
@@ -860,6 +1136,7 @@ function UI.Reset()
     frame:SetScale(1)
     frame:ClearAllPoints()
     frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+    PlacePopup()
   end
 end
 

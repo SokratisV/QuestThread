@@ -152,11 +152,27 @@ function Core.Chain(idx, startId, info)
     end
   end
 
-  local breadcrumbs = {}
+  -- Breadcrumbs: optional quests that hand you a chain quest earlier. One that is itself part of the shown
+  -- chain (you opened it) is not repeated. Each lands on the entry it leads into as `crumbs` (by id).
+  local breadcrumbs, crumbsOf = {}, {}
   for _, id in ipairs(sortedKeys(seen)) do
+    local own = {}
     for _, b in ipairs(idx.bcs[id] or {}) do
-      if known[b] then breadcrumbs[#breadcrumbs + 1] = { id = b, leadsTo = id } end
+      if known[b] and not seen[b] then own[#own + 1] = b end
     end
+    table.sort(own)
+    for _, b in ipairs(own) do
+      local i = info(b) or {}
+      breadcrumbs[#breadcrumbs + 1] = { id = b, leadsTo = id }
+      crumbsOf[id] = crumbsOf[id] or {}
+      table.insert(crumbsOf[id], {
+        id = b, leadsTo = id, name = i.name or ("Quest " .. b), level = i.level, reqLevel = i.reqLevel,
+        pre = i.pre, preS = i.preS, objective = i.objective, rep = i.rep or {}, items = {},
+      })
+    end
+  end
+  for _, layer in ipairs(layers) do
+    for _, e in ipairs(layer) do e.crumbs = crumbsOf[e.id] or {} end
   end
 
   return {
@@ -307,17 +323,17 @@ function Core.Objectives(raw, trigger, L)
     for _, c in ipairs(raw[1] or {}) do
       local areas, spots = {}, {}
       AddSpawns(areas, L.npcSpawns(c[1]), spots)
-      out[#out + 1] = { kind = "kill", name = L.npcName(c[1]) or c[2] or ("NPC " .. tostring(c[1])), areas = SortedAreas(areas), spots = spots }
+      out[#out + 1] = { kind = "kill", id = c[1], name = L.npcName(c[1]) or c[2] or ("NPC " .. tostring(c[1])), areas = SortedAreas(areas), spots = spots }
     end
     for _, c in ipairs(raw[5] or {}) do
       local areas, spots = {}, {}
       for _, npc in ipairs(c[1] or {}) do AddSpawns(areas, L.npcSpawns(npc), spots) end
-      out[#out + 1] = { kind = "kill", name = L.npcName(c[2]) or c[3] or ("NPC " .. tostring(c[2])), areas = SortedAreas(areas), spots = spots }
+      out[#out + 1] = { kind = "kill", id = c[2], name = L.npcName(c[2]) or c[3] or ("NPC " .. tostring(c[2])), areas = SortedAreas(areas), spots = spots }
     end
     for _, c in ipairs(raw[2] or {}) do
       local areas, spots = {}, {}
       AddSpawns(areas, L.objSpawns(c[1]), spots)
-      out[#out + 1] = { kind = "object", name = L.objName(c[1]) or c[2] or ("Object " .. tostring(c[1])), areas = SortedAreas(areas), spots = spots }
+      out[#out + 1] = { kind = "object", id = c[1], name = L.objName(c[1]) or c[2] or ("Object " .. tostring(c[1])), areas = SortedAreas(areas), spots = spots }
     end
     for _, c in ipairs(raw[3] or {}) do
       local areas, droppers, spots = {}, {}, {}
@@ -338,7 +354,7 @@ function Core.Objectives(raw, trigger, L)
       for _, d in ipairs(droppers) do
         if d.name and #from < 3 then from[#from + 1] = d.name end
       end
-      out[#out + 1] = { kind = "item", name = L.itemName(c[1]) or c[2] or ("Item " .. tostring(c[1])), areas = SortedAreas(areas), spots = spots, from = from, sources = #droppers }
+      out[#out + 1] = { kind = "item", id = c[1], name = L.itemName(c[1]) or c[2] or ("Item " .. tostring(c[1])), areas = SortedAreas(areas), spots = spots, from = from, sources = #droppers }
     end
   end
   if type(trigger) == "table" and type(trigger[2]) == "table" then

@@ -55,7 +55,18 @@ While the window is open it follows whichever quest you open in the quest log. E
   out of combat, so it never takes your movement keys.
 - XP per quest and for the chain, reputation totals, and every reward item (hover for its tooltip).
 - **Show remaining** totals only what you haven't finished.
-- Breadcrumb quests that can also lead into the chain are listed separately.
+- **Lead-ins (breadcrumb quests):** an optional quest that hands you a chain quest earlier appears as an indented
+  "Lead-in" row right under the quest it leads into, with its own status icon, zone and ID (Ctrl+C, click and
+  tooltip work as on any row). It says "No longer needed" once you already have or finished the quest it leads
+  into, and is not counted in the step numbers, XP or reward totals. Only what QuestieDB lists as a breadcrumb
+  is shown. Every breadcrumb quest carries a small **bread icon** before its name (in the chain, in lists of
+  results, in tooltips and in the objectives popup).
+- **Objectives popup:** **left-click a quest** and a panel opens beside the window (on the other side when
+  there is no room) with what to do: the quest's objective text, each creature to kill, object to use or item to
+  collect with where it is (and what drops the item; an item shows its icon, and **hovering it shows the item's own game tooltip**), the quest's **rewards** (XP, reputation, and every reward item with its icon and the same hover tooltip), and where the quest starts and is handed in. When the quest
+  is in your quest log it also shows **your progress with the game's own counts** ("Boar slain: 3/8"): QuestieDB
+  says what to kill and collect but not how many, so the numbers can only come from the quest log. The panel
+  follows the quest you click, closes with its X, and does not open when you open a quest some other way.
 
 ## Commands
 - `/qthread` (or `/questthread`): open or close the window

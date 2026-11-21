@@ -332,6 +332,54 @@ function Data.Status(id)
   return nil
 end
 
+-- Is this quest only a breadcrumb (it exists to lead into another quest)?
+function Data.IsBreadcrumb(id)
+  local idx = Data.index
+  return (idx and idx.breadcrumb and idx.breadcrumb[id]) and true or false
+end
+
+-- The quest a breadcrumb leads into, or nil.
+function Data.BreadcrumbTarget(id)
+  local ok, t = pcall(function() return QuestDB.breadcrumbForQuestId and QuestDB.breadcrumbForQuestId(id) end)
+  if ok and type(t) == "number" and t > 0 then return t end
+  return nil
+end
+
+-- The quest log's own objective lines for a quest that is in your log ("Boar slain: 3/8"):
+-- { { text, done }, ... }. QuestieDB lists what to kill and collect but not how many, so the counts
+-- can only come from here.
+function Data.LiveObjectives(id)
+  local out = {}
+  if not (C_QuestLog and C_QuestLog.GetQuestObjectives and C_QuestLog.GetLogIndexForQuestID) then return out end
+  if not C_QuestLog.GetLogIndexForQuestID(id) then return out end
+  local ok, list = pcall(C_QuestLog.GetQuestObjectives, id)
+  if not ok or type(list) ~= "table" then return out end
+  for _, o in ipairs(list) do
+    if type(o) == "table" and type(o.text) == "string" and o.text ~= "" then
+      out[#out + 1] = { text = o.text, done = o.finished and true or false }
+    end
+  end
+  return out
+end
+
+-- A reward item's name: the client's, once it has the item cached, else QuestieDB's.
+function Data.ItemName(id)
+  local n = C_Item and C_Item.GetItemNameByID and C_Item.GetItemNameByID(id)
+  if type(n) == "string" and n ~= "" then return n end
+  n = ItemDB and ItemDB.name and ItemDB.name(id)
+  if type(n) == "string" and n ~= "" then return n end
+  return "Item " .. id
+end
+
+-- The colour code of an item's quality ("|cff1eff00"), or nil when the client does not say.
+function Data.ItemColor(id)
+  local q = C_Item and C_Item.GetItemQualityByID and C_Item.GetItemQualityByID(id)
+  local c = q and ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[q]
+  local hex = c and c.hex
+  if type(hex) == "string" and hex:sub(1, 2) == "|c" then return hex end
+  return nil
+end
+
 function Data.FactionName(id)
   if C_Reputation and C_Reputation.GetFactionDataByID then
     local d = C_Reputation.GetFactionDataByID(id)

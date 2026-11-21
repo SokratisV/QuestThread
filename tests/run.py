@@ -157,6 +157,7 @@ function(quests, items)
     function m.SetFocus(s) s._focused = true end
     function m.HighlightText(s) s._hl = true end
     function m.SetTexCoord(s, a, b, c, d) s._tc = { a, b, c, d } end
+    function m.SetTexture(s, tx) s._tex = tx end
     function m.SetPoint(s, p, rel, a, x, y)
       s._pt = { p, rel, a, x, y }
       s._pts = s._pts or {}
@@ -808,6 +809,16 @@ G.QuestID = None
 G.testQid = 0
 
 # ---- repeatable quests in the chain window ----
+def popup_text():
+    p = popup()
+    parts = [x._text for x in p.textRows.values() if x._shown]
+    for b in p.itemRows.values():
+        if b._shown:
+            parts.append(b.name._text)
+            if b.detail._shown:
+                parts.append(b.detail._text)
+    return chr(10).join(parts)
+
 def chain_row(qid):
     return next(f for f in G.stubs.values() if f._shown and f.entry is not None and f.entry.id == qid)
 
@@ -990,6 +1001,187 @@ new2 = clickers()[before:]
 check("two laid-out rows each get a button", len(new2) == 2, len(new2))
 check("a row with a (Dungeon) tag: the button sits left of the tag", new2[0]._pt[4] == -(400 - (300 - 4)), new2[0]._pt)
 check("a row without a tag: the button keeps its default place (the row's title is ignored)", new2[1]._pt[4] == -34, new2[1]._pt)
+
+# ---- lead-in (breadcrumb) quests ----
+cidx = Core.NewIndex()
+Core.AddQuest(cidx, 10, lua.table_from({"bcs": lua.table_from([11, 12])}))
+Core.AddQuest(cidx, 11, lua.table_from({"bcFor": 10, "next": 10}))
+Core.AddQuest(cidx, 12, lua.table_from({"bcFor": 10, "next": 10}))
+cinfo = lua.eval("function(id) return {name='Q'..id, level=id} end")
+cc = Core.Chain(cidx, 10, cinfo)
+entry10 = list(cc.layers[1].values())[0]
+check("a chain entry carries its lead-in quests, sorted, with their details",
+      [c.id for c in entry10.crumbs.values()] == [11, 12] and entry10.crumbs[1].name == "Q11" and entry10.crumbs[1].leadsTo == 10 and entry10.crumbs[1].level == 11,
+      [c.id for c in entry10.crumbs.values()])
+check("the lead-ins are not part of the chain's steps or count", cc.quests == 1 and cc.parts == 1)
+check("opened from a lead-in itself, the chain contains it and does not repeat it", Core.Chain(cidx, 11, cinfo).quests == 2
+      and all(len(list(e.crumbs.values())) == 1 and list(e.crumbs.values())[0].id == 12 for e in Core.Chain(cidx, 11, cinfo).layers[2].values()))
+check("an entry with no lead-in has an empty list", len(list(Core.Chain(cidx, 11, cinfo).layers[1][1].crumbs.values())) == 0)
+real5 = Core.Chain(idx, 5, lua_info)
+e5 = next(e for layer in real5.layers.values() for e in layer.values() if e.id == 5)
+check("real data: Jitters' Growling Gut (#5) has Raven Hill (#163) as its lead-in", [c.id for c in e5.crumbs.values()] == [163], [c.id for c in e5.crumbs.values()])
+
+G.SlashCmdList["QUESTTHREAD"]("5")
+crows = [f for f in G.stubs.values() if f._shown and f.questId == 163 and f.entry is not None]
+check("the lead-in shows as a row in the chain window", len(crows) == 1, len(crows))
+crow = crows[0] if crows else None
+row5 = next((f for f in G.stubs.values() if f._shown and f.questId == 5 and f.entry is not None and f.entry.leadsTo is None), None)
+row93 = next((f for f in G.stubs.values() if f._shown and f.questId == 93 and f.entry is not None), None)
+check("the lead-in row sits directly under the quest it leads into",
+      crow is not None and row5 is not None and row93 is not None and row5._pt[5] > crow._pt[5] > row93._pt[5], (crow and crow._pt, row5 and row5._pt, row93 and row93._pt))
+check("the lead-in row is named, tagged, numbered with its id", crow is not None and "Lead-in" in crow.name._text and "Raven Hill" in crow.name._text and "#163" in crow.name._text, crow and crow.name._text)
+check("the lead-in row says which step it leads into", crow is not None and "leads into step 1" in crow.sub._text, crow and crow.sub._text)
+check("the lead-in row has a status icon and an indent", crow is not None and crow.status._shown and crow.status._pt[2] == 38 and crow.name._pt[2] == 60, crow and (crow.status._pt, crow.name._pt))
+stats = [f._text for f in G.stubs.values() if f._text and "quests ·" in f._text]
+check("the lead-in is not counted in the chain's quest total", any(("%d quests" % real5.quests) in t for t in stats), stats[:3])
+G.tipLines = lua.table()
+crow._scripts["OnEnter"](crow)
+check("the lead-in's tooltip says what it leads into", any("lead-in to" in t and "Jitters" in t for t in G.tipLines.values()), list(G.tipLines.values())[:3])
+check("the lead-in row carries the bread icon (item 4540's icon, here 100)", "|T100:" in crow.name._text and crow.name._text.index("|T100:") < crow.name._text.index("Lead-in"), crow.name._text)
+row5_name = next(f for f in G.stubs.values() if f._shown and f.questId == 5 and f.entry is not None and f.entry.leadsTo is None).name._text
+check("a quest that is not a breadcrumb has no bread icon", "|T" not in row5_name and "Breadcrumb" not in row5_name, row5_name)
+keys = frame_named("QuestThreadKeys")
+G.testCtrl = True
+keys._scripts["OnKeyDown"](keys, "C")
+G.testCtrl = False
+check("Ctrl+C on a lead-in copies its own Wowhead link", frame_named("QuestThreadLinkFrame").box._text.endswith("quest=163"), frame_named("QuestThreadLinkFrame").box._text)
+crow._scripts["OnLeave"](crow)
+crow._scripts["OnClick"](crow, "LeftButton")
+check("clicking the lead-in opens its own chain", any(f._text == "Raven Hill" for f in G.stubs.values()))
+# a chain row reusing a lead-in row gets its normal layout back
+G.SlashCmdList["QUESTTHREAD"]("5")
+G.SlashCmdList["QUESTTHREAD"]("166")  # a longer chain: rows that held a lead-in now hold chain quests
+chain_rows = [f for f in G.stubs.values() if f._shown and f.entry is not None and f.entry.leadsTo is None]
+check("chain rows are back at the normal indent after a lead-in used the row", all(f.name._pt[2] == 46 and f.status._pt[2] == 24 for f in chain_rows), [(f.name._pt, f.status._pt) for f in chain_rows][:2])
+# when the quest it leads into is already done, the lead-in says it is not needed any more
+G.C_QuestLog.IsQuestFlaggedCompleted = lua.eval("function(id) return id == 5 end")
+G.SlashCmdList["QUESTTHREAD"]("5")
+crow = next(f for f in G.stubs.values() if f._shown and f.questId == 163 and f.entry is not None)
+check("a lead-in is marked 'No longer needed' once its quest is done", "No longer needed" in crow.sub._text, crow.sub._text)
+G.C_QuestLog.IsQuestFlaggedCompleted = lua.eval("function(id) return id == 65 end")
+G.SlashCmdList["QUESTTHREAD"]("5")
+check("the old 'Can also be reached through' footer is gone", not any("Can also be reached" in (f._text or "") for f in G.stubs.values() if f._shown))
+G.SlashCmdList["QUESTTHREAD"]("")
+
+# ---- bread icon on a breadcrumb opened as a step, in search rows and in the tooltip ----
+G.SlashCmdList["QUESTTHREAD"]("163")
+step163 = next((f for f in G.stubs.values() if f._shown and f.questId == 163 and f.entry is not None and f.entry.leadsTo is None), None)
+check("a breadcrumb opened as a step shows the bread icon and a Breadcrumb tag",
+      step163 is not None and "|T100:" in step163.name._text and "Breadcrumb" in step163.name._text, step163 and step163.name._text)
+G.tipLines = lua.table()
+step163._scripts["OnEnter"](step163)
+check("its tooltip says it is a breadcrumb quest", any("Breadcrumb quest" in t for t in G.tipLines.values()), list(G.tipLines.values()))
+step163._scripts["OnLeave"](step163)
+ns2.UI.OpenIds(lua.table_from([163, 5]))
+pick = {f.questId: f for f in G.stubs.values() if f._shown and f.entry is None and f.questId in (163, 5) and f.name is not None and "#" in (f.name._text or "")}
+check("in a pick list only the breadcrumb has the bread icon", "|T100:" in pick[163].name._text and "|T" not in pick[5].name._text, (pick[163].name._text, pick[5].name._text))
+
+# ---- the objectives popup beside the window ----
+def popup():
+    return frame_named("QuestThreadObjectives")
+
+def chain_row(qid):
+    return next(f for f in G.stubs.values() if f._shown and f.questId == qid and f.entry is not None)
+
+G.SlashCmdList["QUESTTHREAD"]("166")
+check("opening a chain without clicking a quest shows no popup", popup() is None or not popup()._shown)
+row166 = chain_row(166)
+row166._scripts["OnClick"](row166, "RightButton")
+check("a right-click (waypoint) does not open the popup", popup() is None or not popup()._shown)
+row166._scripts["OnClick"](row166, "LeftButton")
+pop = popup()
+check("clicking a quest opens the popup", pop is not None and pop._shown)
+mainwin = frame_named("QuestThreadFrame")
+check("the popup is anchored beside the window", pop._pt[1] == "TOPLEFT" and G.rawequal(pop._pt[2], mainwin) and pop._pt[3] == "TOPRIGHT", pop._pt)
+body = popup_text()
+check("the popup shows the quest's objective text", "Kill things." in body, body)
+check("the popup lists the creature to kill and the item to collect", "Kill Test Giver" in body and "Collect Odd Thing" in body, body)
+items = [b for b in pop.itemRows.values() if b._shown and b.itemId == 777]
+check("the item to collect is its own row, with its icon, its line and nothing for the kill",
+      len(items) == 1 and items[0].itemId == 777 and items[0].tex._tex == 100 and "Collect Odd Thing" in items[0].name._text
+      and "Kill Test Giver" in popup_text() and "Kill Test Giver" not in items[0].name._text, [b.name._text for b in items])
+G.tipLines = lua.table()
+G.GameTooltip.SetHyperlink = lua.eval("function(s, link) _G.lastLink = link end")
+G.lastLink = None
+items[0]._scripts["OnEnter"](items[0])
+check("hovering the item shows the game's own item tooltip", G.lastLink == "item:777" and G.GameTooltip._shown, G.lastLink)
+check("hovering highlights the row; leaving clears it and hides the tooltip",
+      items[0].hl._shown and (items[0]._scripts["OnLeave"](items[0]) or True) and not items[0].hl._shown and not G.GameTooltip._shown)
+# rewards: XP, and every reward item as a hoverable row
+want = sorted(int(k) for k, qs in json.load(open(data_path, encoding="utf-8"))["itemQuests"].items() if 166 in qs)
+got = sorted(b.itemId for b in pop.itemRows.values() if b._shown and b.itemId != 777)
+check("the popup lists the quest's reward items, one row each", len(want) > 0 and got == want, (want, got))
+rb = next(b for b in pop.itemRows.values() if b._shown and b.itemId == want[0])
+check("a reward row has its icon and a name", rb.tex._tex == 100 and "Item %d" % want[0] in rb.name._text, rb.name._text)
+G.lastLink = None
+rb._scripts["OnEnter"](rb); rb._scripts["OnLeave"](rb)
+check("hovering a reward item shows its game tooltip", G.lastLink == "item:%d" % want[0], G.lastLink)
+check("the popup has a Rewards section with the XP", "Rewards" in popup_text() and "XP" in popup_text(), popup_text())
+check("the popup is sized to its contents", pop._h is not None and pop._h > 100, pop._h)
+check("the popup says where they are, and what drops the item", "Elwynn Forest" in body and "from Test Giver" in body, body)
+check("the popup says where it starts and where it is handed in", "Starts" in body and "Hand in" in body and "Test Giver" in body, body)
+check("out of the log the popup says counts come with the quest log", "once the quest is in your quest log" in body, body)
+check("the popup title is the quest name, the line under it has the level", "Giver text" not in pop.title._text and "Level 30" in pop.sub._text, (pop.title._text, pop.sub._text))
+# in the quest log: the game's own counts
+G.testClientXp[166] = 500
+G.C_QuestLog.GetQuestObjectives = lua.eval("function(id) if id == 166 then return { { text = 'Giver slain: 3/8', finished = false }, { text = 'Odd Thing: 8/8', finished = true } } end end")
+row166 = chain_row(166)
+row166._scripts["OnClick"](row166, "LeftButton")
+body = popup_text()
+check("a quest in your log shows its live counts", "Your progress" in body and "Giver slain: 3/8" in body and "Odd Thing: 8/8" in body, body)
+check("a finished objective is green, an unfinished one is not", "|cff66e066Odd Thing: 8/8" in body and "|cff66e066Giver slain" not in body, body)
+check("with live counts the 'once the quest is in your log' note is gone", "once the quest is in your quest log" not in body, body)
+xpline = [l for l in popup_text().split(chr(10)) if l.endswith(" XP|r")]
+check("a quest in your log shows the client's exact XP (no ~)", len(xpline) == 1 and "~" not in xpline[0] and "500 XP" in xpline[0], xpline)
+check("the popup says the quest is in your log", "In your quest log" in popup().sub._text, popup().sub._text)
+G.C_QuestLog.GetQuestObjectives = lua.eval("function(id) error('api blew up') end")
+row166._scripts["OnClick"](row166, "LeftButton")
+check("a failing quest-log API does not break the popup", popup()._shown and "Kill Test Giver" in popup_text())
+G.testClientXp[166] = None
+G.C_QuestLog.GetQuestObjectives = lua.eval("function(id) return { { text = 'Giver slain: 3/8', finished = false } } end")
+row166._scripts["OnClick"](row166, "LeftButton")
+check("a quest that is not in your log shows no live counts even if the API answers",
+      "Your progress" not in popup_text() and "3/8" not in popup_text(), popup_text())
+G.C_QuestLog.GetQuestObjectives = None
+# placement: beside the window on the right, flipped to the left when there is no room
+for fr in (mainwin, G.UIParent):
+    fr.GetEffectiveScale = lua.eval("function() return 1 end")
+mainwin.GetRight = lua.eval("function() return 1900 end")
+G.UIParent.GetRight = lua.eval("function() return 1920 end")
+row166._scripts["OnClick"](row166, "LeftButton")
+check("with no room on the right the popup goes to the window's left", popup()._pt[1] == "TOPRIGHT" and popup()._pt[3] == "TOPLEFT", popup()._pt)
+mainwin.GetRight = lua.eval("function() return 800 end")
+row166._scripts["OnClick"](row166, "LeftButton")
+check("with room on the right it stays on the right", popup()._pt[1] == "TOPLEFT" and popup()._pt[3] == "TOPRIGHT", popup()._pt)
+mainwin.GetRight = None
+# a breadcrumb's popup says what it leads into
+G.SlashCmdList["QUESTTHREAD"]("163")
+b163 = chain_row(163)
+b163._scripts["OnClick"](b163, "LeftButton")
+check("a breadcrumb's popup carries the bread icon and says what it leads into",
+      "|T100:" in popup().title._text and "Breadcrumb to" in popup().sub._text and "Jitters" in popup().sub._text, (popup().title._text, popup().sub._text))
+# reputation reward
+G.SlashCmdList["QUESTTHREAD"]("2")
+r2 = chain_row(2)
+r2._scripts["OnClick"](r2, "LeftButton")
+check("the popup shows the reputation reward", "Faction81 +100" in popup_text(), popup_text())
+# closing, re-opening, and picking from a list
+popup().close._scripts["OnClick"](popup().close)
+check("the popup's X closes it", not popup()._shown)
+tg = mainwin.toggle
+tg._scripts["OnClick"](tg); tg._scripts["OnClick"](tg)  # two redraws of the chain
+check("after X the popup stays closed through a redraw", not popup()._shown)
+ns2.UI.OpenIds(lua.table_from([166, 5]))
+pick166 = next(f for f in G.stubs.values() if f._shown and f.entry is None and f.questId == 166 and f.name is not None and "#" in (f.name._text or ""))
+pick166._scripts["OnClick"](pick166, "LeftButton")
+check("clicking a quest in a pick list opens its chain and the popup", popup()._shown and "Kill Test Giver" in popup_text())
+G.SlashCmdList["QUESTTHREAD"]("166")
+check("opening a quest by other means closes the popup", not popup()._shown)
+row166 = chain_row(166)
+row166._scripts["OnClick"](row166, "LeftButton")
+check("(setup) the popup is open before the window is closed", popup()._shown)
+ns2.UI.Toggle(); ns2.UI.Toggle()  # close the window and open it again
+check("a popup left open when the window closes does not come back with it", mainwin._shown and not popup()._shown)
 
 # ---- the chain icon file ----
 import re
