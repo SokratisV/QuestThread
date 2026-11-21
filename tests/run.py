@@ -1027,17 +1027,19 @@ check("the lead-in shows as a row in the chain window", len(crows) == 1, len(cro
 crow = crows[0] if crows else None
 row5 = next((f for f in G.stubs.values() if f._shown and f.questId == 5 and f.entry is not None and f.entry.leadsTo is None), None)
 row93 = next((f for f in G.stubs.values() if f._shown and f.questId == 93 and f.entry is not None), None)
-check("the lead-in row sits directly under the quest it leads into",
-      crow is not None and row5 is not None and row93 is not None and row5._pt[5] > crow._pt[5] > row93._pt[5], (crow and crow._pt, row5 and row5._pt, row93 and row93._pt))
-check("the lead-in row is named, tagged, numbered with its id", crow is not None and "Lead-in" in crow.name._text and "Raven Hill" in crow.name._text and "#163" in crow.name._text, crow and crow.name._text)
+check("the lead-in row sits directly above the quest it leads into",
+      crow is not None and row5 is not None and row93 is not None and crow._pt[5] > row5._pt[5] > row93._pt[5], (crow and crow._pt, row5 and row5._pt, row93 and row93._pt))
+check("the lead-in row is named, tagged, numbered with its id", crow is not None and "Breadcrumb" in crow.tag._text and crow.tag._shown and "Breadcrumb" not in crow.name._text and "Raven Hill" in crow.name._text and "#163" in crow.name._text, crow and crow.name._text)
 check("the lead-in row says which step it leads into", crow is not None and "leads into step 1" in crow.sub._text, crow and crow.sub._text)
 check("the lead-in row has a status icon and an indent", crow is not None and crow.status._shown and crow.status._pt[2] == 38 and crow.name._pt[2] == 60, crow and (crow.status._pt, crow.name._pt))
+check("the breadcrumb row's tag is at the right edge, top line (no XP there)", crow.tag._pt[1] == "TOPRIGHT" and crow.tag._pt[3] == -6, crow.tag._pt)
 stats = [f._text for f in G.stubs.values() if f._text and "quests ·" in f._text]
 check("the lead-in is not counted in the chain's quest total", any(("%d quests" % real5.quests) in t for t in stats), stats[:3])
 G.tipLines = lua.table()
 crow._scripts["OnEnter"](crow)
-check("the lead-in's tooltip says what it leads into", any("lead-in to" in t and "Jitters" in t for t in G.tipLines.values()), list(G.tipLines.values())[:3])
-check("the lead-in row carries the bread icon (item 4540's icon, here 100)", "|T100:" in crow.name._text and crow.name._text.index("|T100:") < crow.name._text.index("Lead-in"), crow.name._text)
+check("the lead-in's tooltip says what it leads into", any("leads into" in t and "Jitters" in t for t in G.tipLines.values()), list(G.tipLines.values())[:3])
+check("the lead-in row carries the bread icon (item 4540's icon, here 100), left of the level",
+      crow.name._text.startswith("|T100:") and crow.name._text.index("|T100:") < crow.name._text.index("["), crow.name._text)
 row5_name = next(f for f in G.stubs.values() if f._shown and f.questId == 5 and f.entry is not None and f.entry.leadsTo is None).name._text
 check("a quest that is not a breadcrumb has no bread icon", "|T" not in row5_name and "Breadcrumb" not in row5_name, row5_name)
 keys = frame_named("QuestThreadKeys")
@@ -1052,6 +1054,7 @@ check("clicking the lead-in opens its own chain", any(f._text == "Raven Hill" fo
 G.SlashCmdList["QUESTTHREAD"]("5")
 G.SlashCmdList["QUESTTHREAD"]("166")  # a longer chain: rows that held a lead-in now hold chain quests
 chain_rows = [f for f in G.stubs.values() if f._shown and f.entry is not None and f.entry.leadsTo is None]
+check("chain rows reusing a breadcrumb row show no tag", not any(f.tag._shown for f in chain_rows), [f.tag._text for f in chain_rows if f.tag._shown])
 check("chain rows are back at the normal indent after a lead-in used the row", all(f.name._pt[2] == 46 and f.status._pt[2] == 24 for f in chain_rows), [(f.name._pt, f.status._pt) for f in chain_rows][:2])
 # when the quest it leads into is already done, the lead-in says it is not needed any more
 G.C_QuestLog.IsQuestFlaggedCompleted = lua.eval("function(id) return id == 5 end")
@@ -1067,13 +1070,18 @@ G.SlashCmdList["QUESTTHREAD"]("")
 G.SlashCmdList["QUESTTHREAD"]("163")
 step163 = next((f for f in G.stubs.values() if f._shown and f.questId == 163 and f.entry is not None and f.entry.leadsTo is None), None)
 check("a breadcrumb opened as a step shows the bread icon and a Breadcrumb tag",
-      step163 is not None and "|T100:" in step163.name._text and "Breadcrumb" in step163.name._text, step163 and step163.name._text)
+      step163 is not None and "|T100:" in step163.name._text and "Breadcrumb" in step163.tag._text and step163.tag._shown, step163 and step163.name._text)
+check("a breadcrumb step's name sits where any row's does, and the word is not in the name",
+      step163.name._pt[2] == 46 and step163.status._pt[2] == 24 and "Breadcrumb" not in step163.name._text, (step163.name._pt, step163.status._pt))
+check("the tag is at the right edge", step163.tag._pt[1] == "TOPRIGHT" and step163.tag._pt[2] < 0, step163.tag._pt)
 G.tipLines = lua.table()
 step163._scripts["OnEnter"](step163)
+check("on a step row the bread icon is left of the level", step163.name._text.startswith("|T100:") and step163.name._text.index("[") > 0, step163.name._text)
 check("its tooltip says it is a breadcrumb quest", any("Breadcrumb quest" in t for t in G.tipLines.values()), list(G.tipLines.values()))
 step163._scripts["OnLeave"](step163)
 ns2.UI.OpenIds(lua.table_from([163, 5]))
 pick = {f.questId: f for f in G.stubs.values() if f._shown and f.entry is None and f.questId in (163, 5) and f.name is not None and "#" in (f.name._text or "")}
+check("in a pick list the bread icon is left of the level", pick[163].name._text.startswith("|T100:"), pick[163].name._text)
 check("in a pick list only the breadcrumb has the bread icon", "|T100:" in pick[163].name._text and "|T" not in pick[5].name._text, (pick[163].name._text, pick[5].name._text))
 
 # ---- the objectives popup beside the window ----

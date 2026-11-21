@@ -55,8 +55,8 @@ While the window is open it follows whichever quest you open in the quest log. E
   out of combat, so it never takes your movement keys.
 - XP per quest and for the chain, reputation totals, and every reward item (hover for its tooltip).
 - **Show remaining** totals only what you haven't finished.
-- **Lead-ins (breadcrumb quests):** an optional quest that hands you a chain quest earlier appears as an indented
-  "Lead-in" row right under the quest it leads into, with its own status icon, zone and ID (Ctrl+C, click and
+- **Breadcrumb quests:** an optional quest that hands you a chain quest earlier appears as an indented
+  "Breadcrumb" row right above the quest it leads into, with its own status icon, zone and ID (Ctrl+C, click and
   tooltip work as on any row). It says "No longer needed" once you already have or finished the quest it leads
   into, and is not counted in the step numbers, XP or reward totals. Only what QuestieDB lists as a breadcrumb
   is shown. Every breadcrumb quest carries a small **bread icon** before its name (in the chain, in lists of

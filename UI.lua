@@ -97,7 +97,7 @@ local function ItemIcon(id)
 end
 
 -- The bread icon (Tough Hunk of Bread, item 4540) marks a breadcrumb quest. It goes into text as an
--- inline texture; "" when the client has no icon for it (the "Breadcrumb" / "Lead-in" word still says it).
+-- inline texture; "" when the client has no icon for it (the "Breadcrumb" word still says it).
 local CRUMB_ITEM = 4540
 local function CrumbIcon()
   local icon = C_Item and C_Item.GetItemIconByID and C_Item.GetItemIconByID(CRUMB_ITEM)
@@ -215,7 +215,7 @@ local function ShowQuestTip(row)
   GameTooltip:AddLine(Crumb(e.id) .. e.name, 1, 0.82, 0)
   local leadsTo = e.leadsTo or (Data.IsBreadcrumb(e.id) and Data.BreadcrumbTarget(e.id)) or nil
   if leadsTo then
-    GameTooltip:AddLine("Breadcrumb quest: optional lead-in to " .. (Data.Name(leadsTo) or ("quest " .. leadsTo)), 0.88, 0.65, 0.29)
+    GameTooltip:AddLine("Breadcrumb quest: optional, leads into " .. (Data.Name(leadsTo) or ("quest " .. leadsTo)), 0.88, 0.65, 0.29)
   elseif Data.IsBreadcrumb(e.id) then
     GameTooltip:AddLine("Breadcrumb quest (optional)", 0.88, 0.65, 0.29)
   end
@@ -429,6 +429,11 @@ local function GetRow(i)
   row.where:Hide()
   row.xp = Text(row, "GameFontNormalSmall", "RIGHT")
   row.xp:SetPoint("TOPRIGHT", -2, -6); row.xp:SetWidth(104)
+  -- The "Breadcrumb" tag has its own slot at the right edge, so the icon, level and name sit exactly where
+  -- they do on any other row.
+  row.tag = Text(row, "GameFontNormalSmall", "RIGHT")
+  row.tag:SetPoint("TOPRIGHT", -2, -6); row.tag:SetWidth(72)
+  row.tag:Hide()
   row.rep = Text(row, "GameFontDisableSmall")
   row.rep:SetWidth(CONTENT_W - 40)
   row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
@@ -495,6 +500,7 @@ local function PlaceRow(n, y, h)
   row.questId, row.entry = nil, nil
   row.rep:Hide(); row.rep:SetWordWrap(false); row.rep:SetWidth(CONTENT_W - 40)
   row.xp:SetText(""); row.num:SetText(""); row.name:SetText("")
+  row.tag:SetText(""); row.tag:Hide(); row.tag:ClearAllPoints(); row.tag:SetPoint("TOPRIGHT", -2, -6)
   row.status:Hide(); row.sub:SetText(""); row.sub:Hide(); row.where:SetText(""); row.where:Hide()
   -- Rows are reused: the summary and result rows move the name, and a lead-in row indents everything.
   row.name:ClearAllPoints(); row.name:SetPoint("TOPLEFT", 46, -5); row.name:SetWidth(CONTENT_W - 46 - 84)
@@ -751,7 +757,7 @@ function Render()
       row.questId = hit.id
       local lv = QuestDB.questLevel and QuestDB.questLevel(hit.id)
       row.name:ClearAllPoints(); row.name:SetPoint("TOPLEFT", 4, -5); row.name:SetWidth(CONTENT_W - 10)
-      row.name:SetText((lv and lv > 0 and ("|cff9d9d9d[" .. lv .. "]|r ") or "") .. Crumb(hit.id) .. hit.name .. "  |cff808080#" .. hit.id .. "|r")
+      row.name:SetText(Crumb(hit.id) .. (lv and lv > 0 and ("|cff9d9d9d[" .. lv .. "]|r ") or "") .. hit.name .. "  |cff808080#" .. hit.id .. "|r")
       y = y + 24
     end
     for i = #results + 1, #rows do rows[i]:Hide() end
@@ -847,6 +853,42 @@ function Render()
 
   for li, layer in ipairs(chain.layers) do
     for qi, e in ipairs(layer) do
+      -- Lead-ins: optional quests that start this one earlier, so they come first. They are not counted in the totals above.
+      for _, c in ipairs(e.crumbs or {}) do
+        local base = Data.Status(c.id)
+        c.status, c.unmet = Core.StatusOf(c, base == "done", base == "log", Data.IsDone, level, nameOf)
+        local over = (e.status == "done" or e.status == "log") and c.status ~= "done" and c.status ~= "log"
+        local cSub
+        if over then
+          cSub = "|cff9aa0a8No longer needed: you already have the quest it leads into|r"
+        elseif #c.unmet > 0 then
+          cSub = "|cffff8a8aNeeds: " .. table.concat(c.unmet, " · ") .. "|r"
+        else
+          cSub = "|cff9aa0a8Optional: leads into step " .. li .. "|r"
+        end
+        local cWhere = WhereText(c)
+        local crow = nextRow(28 + 12 + (cWhere and 12 or 0))
+        crow.questId, crow.entry = c.id, c
+        crow.num:SetText("»")
+        local cell = STATUS_CELL[c.status]
+        if cell then
+          crow.status:SetTexCoord(cell * 0.25, (cell + 1) * 0.25, 0, 1)
+          crow.status:ClearAllPoints(); crow.status:SetPoint("TOPLEFT", 38, -5)
+          crow.status:Show()
+        end
+        crow.name:ClearAllPoints(); crow.name:SetPoint("TOPLEFT", 60, -5); crow.name:SetWidth(CONTENT_W - 60 - 84)
+        local cLvl = c.level and c.level > 0 and ("|cff9d9d9d[" .. c.level .. "]|r ") or ""
+        local cColor = (over or c.status == "done") and "|cff8a9a8c" or (c.status == "locked" and "|cffb4b4b4" or "|cffffffff")
+        crow.tag:SetText("|cffe0a64aBreadcrumb|r"); crow.tag:Show()
+        crow.name:SetText(Crumb(c.id) .. cLvl .. cColor .. c.name .. "|r  |cff808080#" .. c.id .. "|r")
+        crow.sub:ClearAllPoints(); crow.sub:SetPoint("TOPLEFT", 60, -21)
+        crow.sub:SetText(cSub); crow.sub:Show()
+        if cWhere then
+          crow.where:ClearAllPoints(); crow.where:SetPoint("TOPLEFT", 60, -33)
+          crow.where:SetText(cWhere); crow.where:Show()
+        end
+        crow.bar:SetVertexColor(0.88, 0.65, 0.29, 0.8); crow.bar:Show()
+      end
       local hasItems = #e.items > 0
       local rowLines = math.max(1, math.ceil(#e.items / 14))
       local isCurrent = e.id == current
@@ -881,9 +923,7 @@ function Render()
           tag = "  |cff9aa0a8Repeatable|r"
         end
       end
-      -- A breadcrumb opened as a step of its own (normally they hang under the quest they lead into).
-      if Data.IsBreadcrumb(e.id) then tag = tag .. "  |cffe0a64aBreadcrumb|r" end
-      row.name:SetText(lvl .. Crumb(e.id) .. color .. e.name .. "|r  " .. idColor .. "#" .. e.id .. "|r" .. tag)
+      row.name:SetText(Crumb(e.id) .. lvl .. color .. e.name .. "|r  " .. idColor .. "#" .. e.id .. "|r" .. tag)
       if #sub > 0 then row.sub:SetText(table.concat(sub, "  ·  ")); row.sub:Show() end
       if whereText then
         row.where:ClearAllPoints(); row.where:SetPoint("TOPLEFT", 46, -(21 + subH))
@@ -892,45 +932,16 @@ function Render()
       if e.xp > 0 then
         row.xp:SetText((e.xpExact and "" or "~") .. Num(e.xp) .. " XP")
       end
+      -- A breadcrumb opened as a step of its own (normally they hang above the quest they lead into).
+      if Data.IsBreadcrumb(e.id) then
+        row.tag:SetText("|cffe0a64aBreadcrumb|r")
+        if e.xp > 0 then row.tag:ClearAllPoints(); row.tag:SetPoint("TOPRIGHT", -2, -21) end -- under the XP
+        row.tag:Show()
+      end
       if isCurrent then
         row.hl:SetVertexColor(BRONZE_HOVER[1], BRONZE_HOVER[2], BRONZE_HOVER[3], 0.22); row.hl:Show(); row.bar:Show()
       end
       if hasItems then PlaceIcons(row, e.items, 46, -(24 + subH + whereH), 14) end
-      -- Lead-ins: optional quests that start this one earlier. They are not counted in the totals above.
-      for _, c in ipairs(e.crumbs or {}) do
-        local base = Data.Status(c.id)
-        c.status, c.unmet = Core.StatusOf(c, base == "done", base == "log", Data.IsDone, level, nameOf)
-        local over = (e.status == "done" or e.status == "log") and c.status ~= "done" and c.status ~= "log"
-        local cSub
-        if over then
-          cSub = "|cff9aa0a8No longer needed: you already have the quest it leads into|r"
-        elseif #c.unmet > 0 then
-          cSub = "|cffff8a8aNeeds: " .. table.concat(c.unmet, " · ") .. "|r"
-        else
-          cSub = "|cff9aa0a8Optional: leads into step " .. li .. "|r"
-        end
-        local cWhere = WhereText(c)
-        local crow = nextRow(28 + 12 + (cWhere and 12 or 0))
-        crow.questId, crow.entry = c.id, c
-        crow.num:SetText("»")
-        local cell = STATUS_CELL[c.status]
-        if cell then
-          crow.status:SetTexCoord(cell * 0.25, (cell + 1) * 0.25, 0, 1)
-          crow.status:ClearAllPoints(); crow.status:SetPoint("TOPLEFT", 38, -5)
-          crow.status:Show()
-        end
-        crow.name:ClearAllPoints(); crow.name:SetPoint("TOPLEFT", 60, -5); crow.name:SetWidth(CONTENT_W - 60 - 8)
-        local cLvl = c.level and c.level > 0 and ("|cff9d9d9d[" .. c.level .. "]|r ") or ""
-        local cColor = (over or c.status == "done") and "|cff8a9a8c" or (c.status == "locked" and "|cffb4b4b4" or "|cffffffff")
-        crow.name:SetText(cLvl .. Crumb(c.id) .. "|cffe0a64aLead-in|r  " .. cColor .. c.name .. "|r  |cff808080#" .. c.id .. "|r")
-        crow.sub:ClearAllPoints(); crow.sub:SetPoint("TOPLEFT", 60, -21)
-        crow.sub:SetText(cSub); crow.sub:Show()
-        if cWhere then
-          crow.where:ClearAllPoints(); crow.where:SetPoint("TOPLEFT", 60, -33)
-          crow.where:SetText(cWhere); crow.where:Show()
-        end
-        crow.bar:SetVertexColor(0.88, 0.65, 0.29, 0.8); crow.bar:Show()
-      end
     end
   end
   content:SetHeight(math.max(y, 1))
