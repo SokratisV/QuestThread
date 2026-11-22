@@ -280,9 +280,10 @@ function Core.Eligible(raceMask, classMask, raceId, classId)
   return true
 end
 
--- Why a quest you have not done (and are not on) can no longer be done, or nil when it still can. A quest is
--- missed when you already did a later step that needed it, when a quest it excludes is done or in your log,
--- when you are over its level cap, or when you have outleveled it (it is grey to you).
+-- Why a quest you have not done (and are not on) can no longer be done, or nil when it still can. Returns the
+-- reason and its kind: "missed" (lost for good: you already did a later step that needed it, a quest it excludes
+-- is done or in your log, or you are over its level cap) or "grey" (still takeable, but you have outleveled it,
+-- so it is grey to you and worth next to nothing).
 -- c: { isDone(id), inLog(id), nexts = { [id] = { [followUp] = true } }, info(id) -> { pre, preS, level, maxLevel },
 --      exclusive(id) -> {ids}, nameOf(id), level = your level, greenRange = levels below you that are still green }
 function Core.MissedReason(q, c)
@@ -300,19 +301,19 @@ function Core.MissedReason(q, c)
           end
           needs = member and not other
         end
-        if needs then return "Skipped: you already did a later step, " .. c.nameOf(s) end
+        if needs then return "Skipped: you already did a later step, " .. c.nameOf(s), "missed" end
       end
     end
   end
   for _, x in ipairs(c.exclusive(q) or {}) do
-    if x > 0 and (c.isDone(x) or c.inLog(x)) then return "Excluded by " .. c.nameOf(x) end
+    if x > 0 and (c.isDone(x) or c.inLog(x)) then return "Excluded by " .. c.nameOf(x), "missed" end
   end
   local inf = c.info(q) or {}
   if inf.maxLevel and inf.maxLevel > 0 and c.level and c.level > inf.maxLevel then
-    return "Over its level cap (" .. inf.maxLevel .. ")"
+    return "Over its level cap (" .. inf.maxLevel .. ")", "missed"
   end
   if inf.level and inf.level > 0 and c.level and c.greenRange and inf.level < c.level - c.greenRange then
-    return "Outleveled: quest level " .. inf.level .. ", you are " .. c.level
+    return "Outleveled: quest level " .. inf.level .. ", you are " .. c.level, "grey"
   end
   return nil
 end

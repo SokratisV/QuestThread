@@ -1401,15 +1401,19 @@ G.C_QuestLog.IsQuestFlaggedCompleted = lua.eval("function(id) return id == 65 en
 check("the chain with a finished step is not done and has a count", ev.chain[c65].status != "done" and ev.chain[c65].counts.done >= 1, dict(ev.chain[c65].counts))
 G.UnitLevel = lua.eval("function() return 60 end")
 ev60 = Z.Evaluate(m12)
-check("outleveled quests are missed with the reason", ev60.totals.missed > ev.totals.missed and any((ev60.quest[i].detail[1] or "").startswith("Outleveled") for i in all_ids))
+outl = [i for i in all_ids if (ev60.quest[i].greyNote or "").startswith("Outleveled")]
+check("outleveled quests stay available, with a grey note, and are not counted as missed", len(outl) > 0
+      and all(ev60.quest[i].status == "available" and len(ev60.quest[i].detail) == 0 for i in outl) and ev60.totals.missed == ev.totals.missed, (dict(ev60.totals), dict(ev.totals)))
 check("done quests stay done at any level", ev60.quest[65].status == "done")
-check("a chain with nothing available but missed steps is a missed chain", ev60.chain[c65].status == "missed", ev60.chain[c65].status)
+check("a chain with outleveled steps is still available, and counts them as grey, not missed", ev60.chain[c65].status == "available" and ev60.chain[c65].counts.missed == 0 and ev60.chain[c65].counts.grey > 0, (ev60.chain[c65].status, dict(ev60.chain[c65].counts)))
+check("a locked quest you have outleveled stays locked (you cannot take it yet)", all(ev60.quest[i].status != "locked" or ev60.quest[i].greyNote is None for i in all_ids))
 G.UnitLevel = lua.eval("function() return 20 end")
 G.C_QuestLog.IsQuestFlaggedCompleted = lua.eval("function(id) return true end")
 evall = Z.Evaluate(m12)
 check("a chain with every quest done is done", evall.chain[c65].status == "done" and evall.totals.done == len(all_ids), (evall.chain[c65].status, dict(evall.totals)))
 G.C_QuestLog.IsQuestFlaggedCompleted = lua.eval("function(id) return id == 65 end")
 check("filters: all matches anything; a status matches itself", Z.Matches("all", "missed") and Z.Matches("missed", "missed") and not Z.Matches("done", "missed"))
+check("filters: a chain with outleveled steps matches Available and not Missed", Z.ChainMatches("available", ev60.chain[c65]) and not Z.ChainMatches("missed", ev60.chain[c65]))
 check("filters: a chain matches when any quest does; done only when all are", Z.ChainMatches("done", ev.chain[c65]) is False and Z.ChainMatches("missed", ev.chain[c65]) == (ev.chain[c65].counts.missed > 0))
 
 # ---- difficulty colours, who can take a quest, and missed quests ----
@@ -1440,7 +1444,11 @@ state_done, state_log, mctx = lua.eval("""function(Core)
   end
   return done, inlog, ctx
 end""")(Core)
-MR = Core.MissedReason
+def MRK(q, c):
+    r = Core.MissedReason(q, c)
+    return r if isinstance(r, tuple) else (r, None)
+def MR(q, c):
+    return MRK(q, c)[0]
 check("missed: nothing done, nothing missed", MR(1, mctx(10)) is None)
 state_done[2] = True
 check("missed: a later step that needed it is done", MR(1, mctx(10)) == "Skipped: you already did a later step, Q2", MR(1, mctx(10)))
@@ -1459,8 +1467,10 @@ check("missed: ... unless that quest is the prerequisite", (MR(9, mctx(10)) or "
 state_done[8] = None
 state_done[7] = True
 check("missed: an exclusive quest is done", MR(6, mctx(10)) == "Excluded by Q7", MR(6, mctx(10)))
+check("kinds: excluded is missed", MRK(6, mctx(10))[1] == "missed")
 state_done[7] = None
 check("missed: over its level cap", "level cap" in (MR(5, mctx(16)) or "") and MR(5, mctx(15)) is None)
+check("kinds: over the cap is missed, outleveled is grey", MRK(5, mctx(16))[1] == "missed" and MRK(1, mctx(19))[1] == "grey", (MRK(5, mctx(16)), MRK(1, mctx(19))))
 check("missed: outleveled means grey to you", (MR(1, mctx(19)) or "").startswith("Outleveled") and MR(1, mctx(18)) is None, (MR(1, mctx(19)), MR(1, mctx(18))))
 
 # ---- the level in each row has the game's difficulty colour ----
@@ -1599,7 +1609,7 @@ check("/qthread zone <name> opens the Zones tab on that zone", ns2.UI.IsZoneMode
 check("the Zones tab is the lit one", mainwin.tabZone.under._shown and not mainwin.tabChain.under._shown)
 check("the filter starts on Available, the box asks for a zone", G.QuestThreadDB.zone.filter == "available" and mainwin.hint._text == "Zone name")
 cs = chips()
-check("five filter chips, with counts, Missed among them", [c.key for c in cs] == ["available", "log", "missed", "done", "all"] and cs[2].text._text.startswith("Missed ") and cs[0].under._shown and not cs[4].under._shown,
+check("five filter chips, with counts, Missed among them, and no Grey chip", [c.key for c in cs] == ["available", "log", "missed", "done", "all"] and cs[2].text._text.startswith("Missed ") and cs[0].under._shown and not cs[4].under._shown,
       [(c.key, c.text._text) for c in cs])
 rows = zone_rows()
 check("the list starts right under the chips", rows[0]._pt[5] == -30, rows[0]._pt)
@@ -1644,22 +1654,26 @@ check("the tab goes back to grouping by type", any("Chains" in r.name._text for 
 G.UnitLevel = lua.eval("function() return 60 end")
 cs = chips()
 cs[2]._scripts["OnClick"](cs[2])
+check("outleveled quests are not under Missed", not any(r.questId in singles_here for r in zone_rows()) and chips()[2].text._text == "Missed 0", chips()[2].text._text)
+cs = chips()
+cs[0]._scripts["OnClick"](cs[0])
 rows = zone_rows()
 sr = [r for r in rows if r.questId in singles_here]
-check("the Missed chip lists the outleveled quests, each with its reason", G.QuestThreadDB.zone.filter == "missed" and len(sr) > 0
-      and all(r.entry.status == "missed" and "Outleveled" in r.sub._text for r in sr) and all("Missed" in r.tag._text for r in sr), len(sr))
-check("the Missed chip is the lit one", chips()[2].under._shown and not chips()[0].under._shown)
+check("the Available chip lists the outleveled quests, each with its reason in grey and a Grey tag", G.QuestThreadDB.zone.filter == "available" and len(sr) > 0
+      and all(r.entry.status == "available" and "Outleveled" in r.sub._text and "|cff9a9488" in r.sub._text for r in sr) and all("Grey" in r.tag._text and "Missed" not in r.tag._text for r in sr), len(sr))
+check("... and the header line has no grey count", "grey" not in mainwin.stats._text and " 0 missed · " in mainwin.stats._text, mainwin.stats._text)
 G.tipLines = lua.table()
 sr[0]._scripts["OnEnter"](sr[0])
-check("a missed quest's tooltip says Missed and why", any("Missed" == t for t in G.tipLines.values()) and any("Outleveled" in t for t in G.tipLines.values()), list(G.tipLines.values())[-4:])
+check("an outleveled quest's tooltip says Available now and, in grey, that it is outleveled", any("Available now" == t for t in G.tipLines.values()) and any("Outleveled: quest level" in t and "grey to you" in t for t in G.tipLines.values()), list(G.tipLines.values())[-4:])
 sr[0]._scripts["OnLeave"](sr[0])
-check("a missed row has the lock icon, greyed", sr[0].status._shown and sr[0].status._tc is not None)
-cs[0]._scripts["OnClick"](cs[0])
-check("at level 60 nothing in Elwynn is available", any("Nothing here with this filter" in r.name._text for r in zone_rows()))
+check("an outleveled row has the available icon, not the lock", sr[0].status._shown and sr[0].status._tc is not None and not sr[0].status._desat)
+cs[2]._scripts["OnClick"](cs[2])
+check("outleveled quests are not under Missed", not any(r.questId in singles_here for r in zone_rows()) and chips()[2].text._text == "Missed 0", chips()[2].text._text)
 cs[3]._scripts["OnClick"](cs[3])
 check("the Done chip counts what you finished, and a half-done chain is not listed as done", chips()[3].text._text == "Done 1" and not any(r.questId == entry65 for r in zone_rows()), chips()[3].text._text)
 cs[4]._scripts["OnClick"](cs[4])
-check("All lists everything", len(zone_rows()) > len(sr))
+all_rows = {r.questId for r in zone_rows()}
+check("All lists everything, outleveled quests included", len(all_rows) > 0 and all(r.questId in all_rows for r in sr) and chips()[4].text._text == "All %d" % len(Z.Model(12).quests), chips()[4].text._text)
 G.UnitLevel = lua.eval("function() return 20 end")
 cs[0]._scripts["OnClick"](cs[0])
 # the zone picker
@@ -1720,11 +1734,17 @@ chain_p._scripts["OnClick"](chain_p)
 check("clicking a row opens the quest in QuestThread's window with its popup", not ns2.UI.IsZoneMode() and mainwin.title._text == ns2.Data.Name(entry65) and popup()._shown, mainwin.title._text)
 # filters are shared with the Zones tab
 G.UnitLevel = lua.eval("function() return 60 end")
-mpanel.chips[3]._scripts["OnClick"](mpanel.chips[3])
-check("the Missed chip sets the filter the Zones tab uses too", G.QuestThreadDB.zone.filter == "missed" and mpanel.chips[3].under._shown and not mpanel.chips[1].under._shown)
+mpanel.chips[1]._scripts["OnClick"](mpanel.chips[1])
 prow = panel_rows()
-sp = [r for r in prow if r.questId in singles_here]
-check("the panel lists the missed quests, marked", len(sp) > 0 and all("Missed" in r.right._text and r.entry.status == "missed" for r in sp), len(sp))
+sp = [r for r in prow if r.questId in singles_here and r.entry.status == "available"]
+check("the panel's Available list has the outleveled quests, marked Grey", len(sp) > 0 and all("Grey" in r.right._text for r in sp), len(sp))
+G.tipLines = lua.table()
+sp[0]._scripts["OnEnter"](sp[0])
+check("... and their tooltip says so in grey", any("Outleveled: quest level" in t and "grey to you" in t for t in G.tipLines.values()), list(G.tipLines.values())[-3:])
+sp[0]._scripts["OnLeave"](sp[0])
+mpanel.chips[3]._scripts["OnClick"](mpanel.chips[3])
+check("the Missed chip sets the filter the Zones tab uses too, and holds no outleveled quest", G.QuestThreadDB.zone.filter == "missed" and mpanel.chips[3].under._shown and not mpanel.chips[1].under._shown
+      and not any(r.questId in singles_here for r in panel_rows()))
 G.SlashCmdList["QUESTTHREAD"]("zone elwynn")
 check("... and the window's Zones tab shows the same filter", G.QuestThreadDB.zone.filter == "missed" and chips()[2].under._shown)
 G.UnitLevel = lua.eval("function() return 20 end")

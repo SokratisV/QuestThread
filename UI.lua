@@ -266,6 +266,7 @@ local function ShowQuestTip(row)
     end
   end
   for _, line in ipairs(e.unmet or {}) do GameTooltip:AddLine(line, 1, 0.5, 0.5, true) end
+  if e.grey then GameTooltip:AddLine(e.grey .. " (grey to you)", 0.62, 0.6, 0.55, true) end
   if type(e.objective) == "table" and #e.objective > 0 then
     GameTooltip:AddLine(" ")
     for _, line in ipairs(e.objective) do GameTooltip:AddLine(line, 1, 1, 1, true) end
@@ -1114,25 +1115,28 @@ local function RenderZone()
   y = 30
 
   local function statusIcon(row, status, indent)
-    local cell = STATUS_CELL[status == "missed" and "locked" or status]
+    local dim = status == "missed"
+    local cell = STATUS_CELL[dim and "locked" or status]
     if cell then
       row.status:SetTexCoord(cell * 0.25, (cell + 1) * 0.25, 0, 1)
       row.status:ClearAllPoints(); row.status:SetPoint("TOPLEFT", 24 + indent, -5)
-      row.status:SetDesaturated(status == "missed")
+      row.status:SetDesaturated(dim)
       row.status:Show()
     end
   end
-  local function entryFor(id, name, status, detail)
+  local function entryFor(id, name, status, detail, greyNote)
     local info = Zones.InfoOf(id)
     return { id = id, name = name or info.name or ("Quest " .. id), level = info.level, reqLevel = info.reqLevel,
-      objective = info.objective, status = status, unmet = detail }, info
+      objective = info.objective, status = status, unmet = detail, grey = greyNote }, info
   end
   local function questRow(id, indent)
     local s = ev.quest[id]
-    local entry, info = entryFor(id, nil, s.status, s.detail)
+    local entry, info = entryFor(id, nil, s.status, s.detail, s.greyNote)
     local sub
     if s.status == "missed" then
       sub = "|cffd9a04a" .. (s.detail[1] or "Missed") .. "|r"
+    elseif s.greyNote then
+      sub = "|cff9a9488" .. s.greyNote .. "|r"
     elseif s.status == "locked" and #s.detail > 0 then
       sub = "|cffff8a8aNeeds: " .. table.concat(s.detail, " · ") .. "|r"
     end
@@ -1142,13 +1146,14 @@ local function RenderZone()
     row.name:ClearAllPoints(); row.name:SetPoint("TOPLEFT", 46 + indent, -5); row.name:SetWidth(CONTENT_W - 46 - indent - 84)
     row.name:SetText(Crumb(id) .. LevelTag(info.level) .. STATUS_COLOR[s.status] .. entry.name .. "|r  |cff808080#" .. id .. "|r")
     if s.status == "missed" then row.tag:SetText("|cffd9a04aMissed|r"); row.tag:Show() end
+    if s.greyNote then row.tag:SetText("|cff9a9488Grey|r"); row.tag:Show() end
     if sub then row.sub:ClearAllPoints(); row.sub:SetPoint("TOPLEFT", 46 + indent, -21); row.sub:SetText(sub); row.sub:Show() end
     return row
   end
   local function chainRow(c)
     local ce = ev.chain[c]
     local s = ev.quest[c.entry]
-    local entry, info = entryFor(c.entry, c.name, s.status, s.detail)
+    local entry, info = entryFor(c.entry, c.name, s.status, s.detail, s.greyNote)
     local row = nextRow(40)
     row.questId, row.entry, row.onClick = c.entry, entry, ZoneRowClick
     statusIcon(row, ce.status, 0)
@@ -1159,6 +1164,7 @@ local function RenderZone()
     local bits = { ce.counts.done .. " of " .. #c.ids .. " done" }
     if ce.counts.log > 0 then bits[#bits + 1] = "|cff8fc4ff" .. ce.counts.log .. " in your log|r" end
     if ce.counts.missed > 0 then bits[#bits + 1] = "|cffd9a04a" .. ce.counts.missed .. " missed|r" end
+    if ce.counts.grey > 0 then bits[#bits + 1] = "|cff9a9488" .. ce.counts.grey .. " grey|r" end
     row.sub:ClearAllPoints(); row.sub:SetPoint("TOPLEFT", 46, -21)
     row.sub:SetText("|cff9aa0a8" .. table.concat(bits, " · ") .. "|r"); row.sub:Show()
     if ce.status == "missed" then

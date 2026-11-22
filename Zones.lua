@@ -332,7 +332,8 @@ end
 
 -- How every quest of a model stands for you: { quest = { [id] = { status, detail = {texts} } },
 -- chain = { [chain] = { status, counts } }, totals = { quests, done, log, available, locked, missed } }.
--- status is "done" | "log" | "available" | "locked" | "missed".
+-- status is "done" | "log" | "available" | "locked" | "missed" (lost for good). A quest you have outleveled is still
+-- "available" (you can take it), with greyNote saying so; counts.grey in a chain counts those.
 function Zones.Evaluate(model)
   local level = UnitLevel and UnitLevel("player") or 0
   local ctx = missedContext(level)
@@ -342,12 +343,16 @@ function Zones.Evaluate(model)
     if s then return s end
     local base = Data.Status(id)
     local status, unmet = Core.StatusOf(infoOf(id), base == "done", base == "log", Data.IsDone, level, nameOf)
-    local detail = unmet
+    local detail, greyNote = unmet, nil
     if status == "available" or status == "locked" then
-      local reason = Core.MissedReason(id, ctx)
-      if reason then status, detail = "missed", { reason } end
+      local reason, kind = Core.MissedReason(id, ctx)
+      if reason and kind == "grey" then
+        if status == "available" then greyNote = reason end
+      elseif reason then
+        status, detail = "missed", { reason }
+      end
     end
-    s = { status = status, detail = detail }
+    s = { status = status, detail = detail, greyNote = greyNote }
     quest[id] = s
     return s
   end
@@ -358,10 +363,11 @@ function Zones.Evaluate(model)
   end
   local chain = {}
   for _, c in ipairs(model.chains) do
-    local counts = { done = 0, log = 0, available = 0, locked = 0, missed = 0 }
+    local counts = { done = 0, log = 0, available = 0, locked = 0, missed = 0, grey = 0 }
     for _, id in ipairs(c.ids) do
       local s = stat(id)
       counts[s.status] = counts[s.status] + 1
+      if s.greyNote then counts.grey = counts.grey + 1 end
     end
     local status
     if counts.done == #c.ids then status = "done"

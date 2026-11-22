@@ -73,6 +73,7 @@ local function GetRow(i)
     local st = STATUS_TEXT[e.status]
     if st then GameTooltip:AddLine(st[1], st[2], st[3], st[4]) end
     for _, line in ipairs(e.unmet or {}) do GameTooltip:AddLine(line, 1, 0.5, 0.5, true) end
+    if e.grey then GameTooltip:AddLine(e.grey .. " (grey to you)", 0.62, 0.6, 0.55, true) end
     if type(e.objective) == "table" and #e.objective > 0 then
       GameTooltip:AddLine(" ")
       for _, line in ipairs(e.objective) do GameTooltip:AddLine(line, 1, 1, 1, true) end
@@ -115,19 +116,20 @@ local function Layout(items, ev, model)
         local s = ev.quest[item.id]
         id, status, level = item.id, s.status, Zones.InfoOf(item.id).level
         name = Zones.InfoOf(item.id).name or ("Quest " .. item.id)
-        if status == "missed" then right = "|cffd9a04aMissed|r" end
+        if status == "missed" then right = "|cffd9a04aMissed|r" elseif ev.quest[item.id].greyNote then right = "|cff9a9488Grey|r" end
       end
       indent = item.indent or 0
       local info = Zones.InfoOf(id)
       local s = ev.quest[id]
       r.questId = id
       r.entry = { id = id, name = name, level = level, status = item.chain and ev.chain[item.chain].status or status,
-        unmet = s.detail, objective = info.objective }
-      local cell = STATUS_CELL[status == "missed" and "locked" or status]
+        unmet = s.detail, grey = s.greyNote, objective = info.objective }
+      local dim = status == "missed"
+      local cell = STATUS_CELL[dim and "locked" or status]
       if cell then
         r.icon:SetTexCoord(cell * 0.25, (cell + 1) * 0.25, 0, 1)
         r.icon:ClearAllPoints(); r.icon:SetPoint("LEFT", 2 + indent, 0)
-        r.icon:SetDesaturated(status == "missed")
+        r.icon:SetDesaturated(dim)
         r.icon:Show()
       end
       r.text:ClearAllPoints(); r.text:SetPoint("LEFT", 20 + indent, 0)

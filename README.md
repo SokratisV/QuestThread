@@ -81,9 +81,11 @@ chain it belongs to. A quest also counts for the zone your quest log files it un
 shows under its own zone's **In log** chip, even when its giver stands in another zone or has no known spawn. Pick a zone by typing its name, or open it from a zone link (**Ctrl+click** a blue zone
 name) or with `/qthread zone <name>`; with no name it shows the zone you are standing in.
 - **Filter chips:** **Available**, **In log**, **Missed**, **Done**, **All**, each with its count.
-- **Missed** means a quest you can no longer do (or have outgrown), and the row says why: you already did a later
-  step of its chain ("Skipped"), a quest it excludes is done or in your log, you are over its level cap, or it
-  is grey to you ("Outleveled"). Quests meant for another race, class or faction are left out of the list, and out of a chain's steps.
+- **Missed** means a quest you can no longer take at all, and the row says why: you already did a later
+  step of its chain ("Skipped"), a quest it excludes is done or in your log, or you are over its level cap.
+- A quest you have **outleveled** (grey to you in the game) is still **Available**, since you can take it, and
+  so is part of **All**; its row says "Outleveled: quest level 35, you are 47" in grey and carries a "Grey" tag. It
+  is never counted as missed. Quests meant for another race, class or faction are left out of the list, and out of a chain's steps.
 - **By type** (the default) shows chains (one row each, with its steps, level range and how much is done),
   then single quests, then **the objects and items that start quests** (a poster, a dropped note) with the quest
   each one starts. **By giver** (the second tab at the right, lit when active like Chains and Zones) shows one fold-out header per NPC, object or item,
