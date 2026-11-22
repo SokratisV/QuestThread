@@ -218,6 +218,90 @@ function Core.StatusOf(info, done, inLog, isDone, level, nameOf)
   return "available", {}
 end
 
+-- Scroll bar maths. The thumb is as tall as the share of the content that shows (never under minH, never over the
+-- bar), and sits `top` px below the bar's top. nil when everything fits and there is nothing to scroll.
+function Core.Thumb(contentH, viewH, scroll, minH)
+  if not contentH or not viewH or viewH <= 0 or contentH <= viewH + 1 then return nil end
+  local th = math.min(viewH, math.max(minH or 24, viewH * viewH / contentH))
+  local frac = math.min(1, math.max(0, (scroll or 0) / (contentH - viewH)))
+  return th, (viewH - th) * frac
+end
+
+-- The scroll offset for a thumb of height th whose top is `top` px below the bar's top (clamped to the bar).
+function Core.ScrollForThumb(top, th, contentH, viewH)
+  local free = viewH - th
+  if free <= 0 or contentH <= viewH then return 0 end
+  return math.min(1, math.max(0, top / free)) * (contentH - viewH)
+end
+
+-- The game's quest difficulty colour for a quest level, as it shows in the quest log: red 5 or more levels above
+-- you, orange 3-4 above, yellow within 2 of you, green below that while it still gives XP, grey when it is trivial.
+-- greenRange is how many levels below you a quest stays green (the game's GetQuestGreenRange).
+Core.DIFFICULTY = {
+  red = { 1, 0.1, 0.1, "|cffff1a1a" }, orange = { 1, 0.5, 0.25, "|cffff8040" }, yellow = { 1, 1, 0, "|cffffff00" },
+  green = { 0.25, 0.75, 0.25, "|cff40bf40" }, grey = { 0.5, 0.5, 0.5, "|cff808080" },
+}
+
+-- Returns "red" | "orange" | "yellow" | "green" | "grey", or nil when either level is unknown.
+function Core.Difficulty(qLevel, level, greenRange)
+  if type(qLevel) ~= "number" or qLevel <= 0 or type(level) ~= "number" or level <= 0 then return nil end
+  local diff = qLevel - level
+  if diff >= 5 then return "red" end
+  if diff >= 3 then return "orange" end
+  if diff >= -2 then return "yellow" end
+  if -diff <= (greenRange or 8) then return "green" end
+  return "grey"
+end
+
+-- QuestieDB's race and class masks: bit (id - 1) is set for each race or class that can take the quest
+-- (races: Human 1, Orc 2, Dwarf 3 ...; classes: Warrior 1, Paladin 2, Hunter 3 ...). nil or 0 means anyone.
+local function maskHas(mask, id)
+  return floor(mask / 2 ^ (id - 1)) % 2 == 1
+end
+
+function Core.Eligible(raceMask, classMask, raceId, classId)
+  if type(raceMask) == "number" and raceMask > 0 and raceId and not maskHas(raceMask, raceId) then return false end
+  if type(classMask) == "number" and classMask > 0 and classId and not maskHas(classMask, classId) then return false end
+  return true
+end
+
+-- Why a quest you have not done (and are not on) can no longer be done, or nil when it still can. A quest is
+-- missed when you already did a later step that needed it, when a quest it excludes is done or in your log,
+-- when you are over its level cap, or when you have outleveled it (it is grey to you).
+-- c: { isDone(id), inLog(id), nexts = { [id] = { [followUp] = true } }, info(id) -> { pre, preS, level, maxLevel },
+--      exclusive(id) -> {ids}, nameOf(id), level = your level, greenRange = levels below you that are still green }
+function Core.MissedReason(q, c)
+  local set = c.nexts[q]
+  if set then
+    for _, s in ipairs(sortedKeys(set)) do
+      if c.isDone(s) or c.inLog(s) then
+        local si = c.info(s) or {}
+        local needs = false
+        for _, p in ipairs(si.pre or {}) do if p == q then needs = true end end
+        if not needs and si.preS then
+          local member, other = false, false
+          for _, p in ipairs(si.preS) do
+            if p == q then member = true elseif p > 0 and c.isDone(p) then other = true end
+          end
+          needs = member and not other
+        end
+        if needs then return "Skipped: you already did a later step, " .. c.nameOf(s) end
+      end
+    end
+  end
+  for _, x in ipairs(c.exclusive(q) or {}) do
+    if x > 0 and (c.isDone(x) or c.inLog(x)) then return "Excluded by " .. c.nameOf(x) end
+  end
+  local inf = c.info(q) or {}
+  if inf.maxLevel and inf.maxLevel > 0 and c.level and c.level > inf.maxLevel then
+    return "Over its level cap (" .. inf.maxLevel .. ")"
+  end
+  if inf.level and inf.level > 0 and c.level and c.greenRange and inf.level < c.level - c.greenRange then
+    return "Outleveled: quest level " .. inf.level .. ", you are " .. c.level
+  end
+  return nil
+end
+
 -- Case-insensitive substring search over quest names: ids is a list, nameOf(id) -> string or nil.
 -- Exact matches first, then shorter names, then by id. At most `limit` results.
 function Core.Search(ids, nameOf, text, limit)

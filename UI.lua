@@ -2,6 +2,7 @@
 -- to Blizzard globals, no StaticPopup).
 local ADDON, ns = ...
 local Core, Data = ns.Core, ns.Data
+local Zones -- ns.Zones, looked up when first used (it loads after Data)
 local UI = {}
 ns.UI = UI
 
@@ -29,7 +30,9 @@ end
 
 local frame, content, scroll
 local rows, iconPool = {}, {}
-local current, showRemaining, notice, results, backTo
+local current, notice, results, backTo
+local zoneMode, zonePick, zoneNotice, lastZoneShown -- the Zones tab
+local collapsed = {} -- [area:giver] = true for a giver folded shut in the by-giver view
 local Render -- defined below; the row click handlers need it
 
 local function Say(msg) print("|cffffd100QuestThread:|r " .. msg) end
@@ -39,10 +42,33 @@ local function DB()
   return QuestThreadDB
 end
 
+-- What the Zones tab remembers: the area, the filter chip and whether it groups by giver.
+local function ZS()
+  DB().zone = DB().zone or {}
+  local z = DB().zone
+  if z.filter == nil then z.filter = "available" end
+  return z
+end
+
 local function Num(n)
   local s = tostring(math.floor(n + 0.5))
   local out = s:reverse():gsub("(%d%d%d)", "%1,"):reverse()
   return (out:gsub("^,", ""))
+end
+
+-- A quest level coloured the way the game colours it for your level; Core.Difficulty decides.
+local function DifficultyKey(qLevel)
+  local level = UnitLevel and UnitLevel("player") or 0
+  local green = GetQuestGreenRange and GetQuestGreenRange() or 8
+  return Core.Difficulty(qLevel, level, green)
+end
+
+-- "[52] " in its difficulty colour, or "" when the level is unknown.
+local function LevelTag(qLevel)
+  if type(qLevel) ~= "number" or qLevel <= 0 then return "" end
+  local key = DifficultyKey(qLevel)
+  local hex = key and Core.DIFFICULTY[key][4] or "|cff9d9d9d"
+  return hex .. "[" .. qLevel .. "]|r "
 end
 
 local function Solid(parent, layer, r, g, b, a)
@@ -80,8 +106,11 @@ local function Button(parent, label, w, h)
       local v = (over or down) and 0.26 or 0.16
       b.face:SetVertexColor(v, v + 0.03, v + 0.08)
     end
-    if over then b.text:SetTextColor(1, 1, 1) else b.text:SetTextColor(1, 0.82, 0) end
+    if over then b.text:SetTextColor(1, 1, 1)
+    elseif b.dim then b.text:SetTextColor(0.62, 0.54, 0.38)
+    else b.text:SetTextColor(1, 0.82, 0) end
   end
+  b.paint = Paint
   b:SetScript("OnEnter", function() over = true; Paint() end)
   b:SetScript("OnLeave", function() over = nil; Paint() end)
   b:SetScript("OnMouseDown", function() down = true; Paint() end)
@@ -108,6 +137,19 @@ end
 -- The icon in front of a quest's name when it is a breadcrumb, else "".
 local function Crumb(id)
   return Data.IsBreadcrumb(id) and CrumbIcon() or ""
+end
+
+-- How wide the words "You are here" are, for the click area over them.
+local hereWidth
+local function HereWidth()
+  if not hereWidth then
+    local m = UIParent:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    m:SetText("You are here")
+    local w = m:GetStringWidth()
+    m:SetText("")
+    hereWidth = (type(w) == "number" and w > 0 and w or 70) + 2
+  end
+  return hereWidth
 end
 
 local function GetIconButton(parent)
@@ -172,6 +214,7 @@ end
 local STATUS_TEXT = {
   done = { "Completed", 0.4, 0.8, 0.4 }, log = { "In your quest log", 0.56, 0.77, 1 },
   available = { "Available now", 0.4, 1, 0.4 }, locked = { "Locked", 1, 0.4, 0.4 },
+  missed = { "Missed", 0.85, 0.65, 0.3 },
 }
 
 local KIND_VERB = { kill = "Kill", object = "Use", item = "Collect", explore = "Go to" }
@@ -181,20 +224,6 @@ local function ZoneList(areas, max)
   for i = 1, math.min(max, #areas) do names[#names + 1] = Data.ZoneName(areas[i]) end
   if #areas > max then names[#names + 1] = "+" .. (#areas - max) end
   return table.concat(names, ", ")
-end
-
--- The blue "where" line of a chain row, or nil when nothing is known.
-local function WhereText(e)
-  local w = Data.Where(e.id)
-  if #w.zones > 0 then
-    local names = {}
-    for _, area in ipairs(w.zones) do names[#names + 1] = Data.ZoneName(area) end
-    return "|cff8fb4c8" .. table.concat(names, ", ") .. (w.extra > 0 and (" +" .. w.extra) or "") .. "|r"
-  end
-  local g = Data.Givers(e.id, "end")[1]
-  local place = g and Data.Locate(g, e.id)
-  if place then return "|cff8fb4c8Hand in: " .. Data.ZoneName(place.area, place.uiMap) .. "|r" end
-  return nil
 end
 
 local function ShowQuestTip(row)
@@ -221,7 +250,11 @@ local function ShowQuestTip(row)
   end
   local lv = e.level and e.level > 0 and ("Level " .. e.level) or nil
   if e.reqLevel and e.reqLevel > 0 then lv = (lv and (lv .. " · ") or "") .. "requires level " .. e.reqLevel end
-  if lv then GameTooltip:AddLine(lv, 0.8, 0.8, 0.8) end
+  if lv then
+    local key = DifficultyKey(e.level)
+    local c = key and Core.DIFFICULTY[key]
+    GameTooltip:AddLine(lv, c and c[1] or 0.8, c and c[2] or 0.8, c and c[3] or 0.8)
+  end
   local st = STATUS_TEXT[e.status]
   if st then GameTooltip:AddLine(st[1], st[2], st[3], st[4]) end
   local rep = Data.RepeatInfo(e.id)
@@ -400,12 +433,130 @@ local function Unhover(row)
   if hoverRow == row then hoverRow = nil; ListenForKeys(false) end
 end
 
+-- ---- clickable places: a dungeon opens the Dungeon Journal, a zone opens the map on that area ----
+-- The "where" line of a quest as segments, or nil when nothing is known. A segment is
+-- { text, color, sep (shown after it), link = { kind = "dungeon", id, name } | { kind = "zone", area } }.
+local function WhereSegments(e)
+  local segs = {}
+  local dungeon = Data.DungeonOf(e.id)
+  if dungeon then
+    segs[#segs + 1] = { text = "Dungeon: " .. dungeon, color = "|cffe0a64a", rgb = { 0.88, 0.65, 0.29 }, sep = "  ·  ",
+      link = { kind = "dungeon", id = e.id, name = dungeon } }
+  end
+  local w = Data.Where(e.id)
+  if #w.zones > 0 then
+    for i, area in ipairs(w.zones) do
+      segs[#segs + 1] = { text = Data.ZoneName(area), link = { kind = "zone", area = area }, sep = i < #w.zones and ", " or nil }
+    end
+    if w.extra > 0 then segs[#segs].sep = " +" .. w.extra end
+  else
+    local g = Data.Givers(e.id, "end")[1]
+    local place = g and Data.Locate(g, e.id)
+    if place then
+      segs[#segs + 1] = { text = "Hand in: " .. Data.ZoneName(place.area, place.uiMap), link = { kind = "zone", area = place.area } }
+    end
+  end
+  if #segs == 0 then return nil end
+  return segs
+end
+
+local LINK_RGB = { 0.56, 0.71, 0.78 } -- the blue of a zone link (|cff8fb4c8)
+
+local measureFS
+local function TextWidth(text)
+  if text == "" then return 0 end
+  if not measureFS then measureFS = UIParent:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall") end
+  measureFS:SetText(text)
+  local w = measureFS:GetStringWidth()
+  measureFS:SetText("")
+  return type(w) == "number" and w or 0
+end
+
+local function HintFor(link)
+  if link.kind == "dungeon" then return "Click: open this quest in the Dungeon Journal (" .. link.name .. ")" end
+  return "Click: open the map on " .. Data.ZoneName(link.area) .. " · Ctrl+click: the quests that start there"
+end
+
+local function Activate(link)
+  if link.kind == "zone" and IsControlKeyDown and IsControlKeyDown() then return UI.ShowZones(link.area) end
+  local ok, msg
+  if link.kind == "dungeon" then ok, msg = Data.OpenInJournal(link.id) else ok, msg = Data.OpenMapAt(link.area) end
+  if not ok and msg then Say(msg) end
+end
+
+-- An owner (a row, or a popup line) keeps its link buttons in owner.links; owner.linkParent is the frame they
+-- sit on (the owner itself for a row) and owner.hoverRow the row whose Ctrl+C stays live while over a link.
+local function NewLink(owner)
+  local b = CreateFrame("Button", nil, owner.linkParent or owner)
+  b:SetHeight(12)
+  -- Clickable text is underlined, the way a hyperlink is (a font cannot underline, so it is a thin line).
+  b.line = Solid(b, "OVERLAY", 0.56, 0.71, 0.78, 0.9)
+  b.line:SetPoint("BOTTOMLEFT", 0, 1); b.line:SetPoint("BOTTOMRIGHT", 0, 1); b.line:SetHeight(1)
+  b:SetScript("OnEnter", function(self)
+    self.line:SetVertexColor(1, 1, 1, 1)
+    self.fs:SetText(self.build(self.segIndex)) -- lit up
+    if owner.hoverRow then Hover(owner.hoverRow) end
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    GameTooltip:AddLine(HintFor(self.link), 0.56, 0.77, 1, true)
+    GameTooltip:Show()
+  end)
+  b:SetScript("OnLeave", function(self)
+    local c = self.rgb or LINK_RGB
+    self.line:SetVertexColor(c[1], c[2], c[3], 0.9)
+    self.fs:SetText(self.build())
+    if owner.hoverRow then Unhover(owner.hoverRow) end
+    GameTooltip:Hide()
+  end)
+  b:SetScript("OnClick", function(self)
+    if frame and frame.box then frame.box:ClearFocus() end
+    Activate(self.link)
+  end)
+  owner.links[#owner.links + 1] = b
+  return b
+end
+
+local function HideLinks(owner)
+  for _, b in ipairs(owner.links or {}) do b:Hide() end
+end
+
+-- Shows the segments as one line in `fs` and lays a button over each one that has a link (no wider than maxW).
+local function PlaceSegments(fs, owner, segs, maxW)
+  owner.links = owner.links or {}
+  HideLinks(owner)
+  local function build(hot)
+    local parts = {}
+    for i, s in ipairs(segs) do
+      parts[#parts + 1] = (hot == i and "|cffffffff" or (s.color or "|cff8fb4c8")) .. s.text .. "|r" .. (s.sep or "")
+    end
+    return table.concat(parts)
+  end
+  fs:SetText(build()); fs:Show()
+  local before, n = "", 0
+  for i, s in ipairs(segs) do
+    local x = TextWidth(before)
+    if s.link and x < maxW then
+      n = n + 1
+      local b = owner.links[n] or NewLink(owner)
+      b.link, b.segIndex, b.fs, b.build = s.link, i, fs, build
+      b.rgb = s.rgb or LINK_RGB
+      b.line:SetVertexColor(b.rgb[1], b.rgb[2], b.rgb[3], 0.9)
+      b:ClearAllPoints(); b:SetPoint("TOPLEFT", fs, "TOPLEFT", x, 0)
+      b:SetSize(math.min(TextWidth(s.text), maxW - x), 12)
+      b:Show()
+    end
+    before = before .. s.text .. (s.sep or "")
+  end
+end
+
 -- ---- rows ----
 local function GetRow(i)
   local row = rows[i]
   if row then return row end
   row = CreateFrame("Button", nil, content)
   row:SetWidth(CONTENT_W)
+  row.hover = Solid(row, "BACKGROUND", 0.13, 0.095, 0.055, 0.85) -- FlareUI's hover plate
+  row.hover:SetAllPoints()
+  row.hover:Hide()
   row.hl = Solid(row, "BACKGROUND", BRONZE_HOVER[1], BRONZE_HOVER[2], BRONZE_HOVER[3], 0.22)
   row.hl:SetAllPoints()
   row.bar = Solid(row, "ARTWORK", BRONZE_LIT[1], BRONZE_LIT[2], BRONZE_LIT[3], 1)
@@ -427,6 +578,32 @@ local function GetRow(i)
   row.where = Text(row, "GameFontNormalSmall")
   row.where:SetPoint("TOPLEFT", 46, -21); row.where:SetWidth(CONTENT_W - 46 - 8)
   row.where:Hide()
+  -- "You are here" is a button laid over the text: it opens the quest log on this quest.
+  row.hoverRow = row
+  row.here = CreateFrame("Button", nil, row)
+  row.here:SetPoint("TOPLEFT", 46, -21)
+  row.here:SetHeight(12)
+  row.here:Hide()
+  row.here.line = Solid(row.here, "OVERLAY", 1, 0.82, 0, 0.9)
+  row.here.line:SetPoint("BOTTOMLEFT", 0, 1); row.here.line:SetPoint("BOTTOMRIGHT", 0, 1); row.here.line:SetHeight(1)
+  row.here:SetScript("OnEnter", function()
+    row.here.line:SetVertexColor(1, 1, 1, 1)
+    if row.subHot then row.sub:SetText(row.subHot) end
+    Hover(row); ShowQuestTip(row)
+    GameTooltip:AddLine("Click \"You are here\": show this quest in your quest log", 0.56, 0.77, 1, true)
+    GameTooltip:Show()
+  end)
+  row.here:SetScript("OnLeave", function()
+    row.here.line:SetVertexColor(1, 0.82, 0, 0.9)
+    if row.subNormal then row.sub:SetText(row.subNormal) end
+    Unhover(row); GameTooltip:Hide()
+  end)
+  row.here:SetScript("OnClick", function()
+    if not row.questId then return end
+    if frame and frame.box then frame.box:ClearFocus() end
+    local ok, msg = Data.OpenInQuestLog(row.questId)
+    if not ok and msg then Say(msg) end
+  end)
   row.xp = Text(row, "GameFontNormalSmall", "RIGHT")
   row.xp:SetPoint("TOPRIGHT", -2, -6); row.xp:SetWidth(104)
   -- The "Breadcrumb" tag has its own slot at the right edge, so the icon, level and name sit exactly where
@@ -438,6 +615,7 @@ local function GetRow(i)
   row.rep:SetWidth(CONTENT_W - 40)
   row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
   row:SetScript("OnClick", function(self, button)
+    if self.onClick then return self.onClick(self, button) end
     if not self.questId then return end
     if frame and frame.box then frame.box:ClearFocus() end
     if button == "RightButton" and self.entry then
@@ -453,8 +631,11 @@ local function GetRow(i)
       UI.Open(self.questId, true, true) -- inside a chain the list (if any) stays one Back away
     end
   end)
-  row:SetScript("OnEnter", function(self) Hover(self); ShowQuestTip(self) end)
-  row:SetScript("OnLeave", function(self) Unhover(self); GameTooltip:Hide() end)
+  row:SetScript("OnEnter", function(self)
+    if self.questId or self.onClick then self.hover:Show() end
+    Hover(self); ShowQuestTip(self)
+  end)
+  row:SetScript("OnLeave", function(self) self.hover:Hide(); Unhover(self); GameTooltip:Hide() end)
   rows[i] = row
   return row
 end
@@ -477,17 +658,16 @@ local function SumReputation(entries)
   return table.concat(parts, ", ")
 end
 
--- A slim bronze scroll indicator (not draggable; the mouse wheel scrolls).
+-- The slim bronze scroll bar: drag the thumb, click the track to jump there, or use the mouse wheel. It is a frame
+-- of its own, so a click on it never reaches the window behind (which would start moving the window).
 local function UpdateThumb()
-  if not (frame and frame.thumb and scroll and content) then return end
-  local ch, vh = content:GetHeight(), scroll:GetHeight()
-  if not ch or not vh or vh <= 0 or ch <= vh + 1 then frame.thumb:Hide(); frame.track:Hide(); return end
-  local th = math.max(24, vh * vh / ch)
-  local frac = math.min(1, math.max(0, scroll:GetVerticalScroll() / (ch - vh)))
+  if not (frame and frame.bar and scroll and content) then return end
+  local th, top = Core.Thumb(content:GetHeight(), scroll:GetHeight(), scroll:GetVerticalScroll())
+  if not th then frame.bar:Hide(); return end
   frame.thumb:SetHeight(th)
   frame.thumb:ClearAllPoints()
-  frame.thumb:SetPoint("TOPRIGHT", scroll, "TOPRIGHT", 13, -(vh - th) * frac)
-  frame.thumb:Show(); frame.track:Show()
+  frame.thumb:SetPoint("TOP", frame.bar, "TOP", 0, -top)
+  frame.bar:Show()
 end
 
 local function PlaceRow(n, y, h)
@@ -496,10 +676,12 @@ local function PlaceRow(n, y, h)
   row:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -y)
   row:SetHeight(h)
   row:Show()
-  row.hl:Hide(); row.bar:Hide()
+  row.hl:Hide(); row.bar:Hide(); row.hover:Hide()
   row.questId, row.entry = nil, nil
   row.rep:Hide(); row.rep:SetWordWrap(false); row.rep:SetWidth(CONTENT_W - 40)
   row.xp:SetText(""); row.num:SetText(""); row.name:SetText("")
+  row.here:Hide(); row.subNormal, row.subHot = nil, nil; HideLinks(row)
+  row.onClick = nil; row.status:SetDesaturated(false)
   row.tag:SetText(""); row.tag:Hide(); row.tag:ClearAllPoints(); row.tag:SetPoint("TOPRIGHT", -2, -6)
   row.status:Hide(); row.sub:SetText(""); row.sub:Hide(); row.where:SetText(""); row.where:Hide()
   -- Rows are reused: the summary and result rows move the name, and a lead-in row indents everything.
@@ -532,6 +714,20 @@ local function ObjectivePieces(id)
   if type(info.objective) == "table" and #info.objective > 0 then
     add(Head("What to do"))
     for _, line in ipairs(info.objective) do add("|cffffffff" .. line .. "|r") end
+    add(" ")
+  end
+  local places = WhereSegments({ id = id })
+  if places then
+    add(Head("Where"))
+    flush()
+    local dungeonLine, zoneLine = {}, {}
+    for _, s in ipairs(places) do
+      local copy = { text = s.text, color = s.color, link = s.link, sep = s.link.kind == "zone" and s.sep or nil }
+      local line = s.link.kind == "dungeon" and dungeonLine or zoneLine
+      line[#line + 1] = copy
+    end
+    if #dungeonLine > 0 then pieces[#pieces + 1] = { links = dungeonLine } end
+    if #zoneLine > 0 then pieces[#pieces + 1] = { links = zoneLine } end
     add(" ")
   end
   local live = Data.LiveObjectives(id)
@@ -618,16 +814,22 @@ local function BuildPopup()
   Boxed(popup, true)
   popup:SetBackdropColor(0.05, 0.05, 0.05, 0.95)
   popup.title = Text(popup, "GameFontNormal")
-  popup.title:SetPoint("TOPLEFT", 14, -12); popup.title:SetWidth(POP_W - 56)
+  popup.title:SetPoint("TOPLEFT", 14, -12); popup.title:SetWidth(POP_W - 126)
   popup.sub = Text(popup, "GameFontHighlightSmall")
   popup.sub:SetPoint("TOPLEFT", 14, -30); popup.sub:SetWidth(POP_W - 28)
   local rule = Solid(popup, "BORDER", BRONZE_MUTED[1], BRONZE_MUTED[2], BRONZE_MUTED[3], 0.6)
   rule:SetPoint("TOPLEFT", 14, -48); rule:SetPoint("TOPRIGHT", -14, -48); rule:SetHeight(1)
-  popup.textRows, popup.itemRows = {}, {}
+  popup.textRows, popup.itemRows, popup.linkRows = {}, {}, {}
   local close = Button(popup, "X", 22, 22)
   close:SetPoint("TOPRIGHT", -12, -10)
   close:SetScript("OnClick", function() popupFor = nil; popup:Hide() end)
   popup.close = close
+  popup.chainBtn = Button(popup, "Chain", 52, 22)
+  popup.chainBtn:SetPoint("RIGHT", close, "LEFT", -6, 0)
+  popup.chainBtn:SetScript("OnClick", function()
+    local id = popupFor
+    if id then UI.Open(id, false, true) end
+  end)
   popup:Hide()
 end
 
@@ -674,6 +876,18 @@ local function ItemPiece(i)
   return b
 end
 
+-- One line of clickable places in the popup.
+local function LinkPiece(i)
+  local r = popup.linkRows[i]
+  if not r then
+    r = { linkParent = popup, links = {} }
+    r.fs = Text(popup, "GameFontNormalSmall")
+    r.fs:SetWidth(POP_W - 28)
+    popup.linkRows[i] = r
+  end
+  return r
+end
+
 local function TextHeight(fs, text)
   local h = fs:GetStringHeight()
   if type(h) == "number" and h > 0 then return h end
@@ -684,9 +898,16 @@ end
 local function LayoutPopup(pieces)
   for _, fs in ipairs(popup.textRows) do fs:Hide() end
   for _, b in ipairs(popup.itemRows) do b:Hide() end
-  local y, nt, ni = 56, 0, 0
+  for _, r in ipairs(popup.linkRows) do r.fs:Hide(); HideLinks(r) end
+  local y, nt, ni, nl = 56, 0, 0, 0
   for _, p in ipairs(pieces) do
-    if p.item then
+    if p.links then
+      nl = nl + 1
+      local r = LinkPiece(nl)
+      r.fs:ClearAllPoints(); r.fs:SetPoint("TOPLEFT", popup, "TOPLEFT", 14, -y)
+      PlaceSegments(r.fs, r, p.links, POP_W - 28)
+      y = y + 16
+    elseif p.item then
       ni = ni + 1
       local b = ItemPiece(ni)
       b.itemId = p.item
@@ -717,7 +938,10 @@ local function ShowObjectives(id)
   popup.title:SetText(Crumb(id) .. "|cffffd100" .. name .. "|r")
   local bits = {}
   local lv = QuestDB.questLevel and QuestDB.questLevel(id)
-  if lv and lv > 0 then bits[#bits + 1] = "Level " .. lv end
+  if lv and lv > 0 then
+    local key = DifficultyKey(lv)
+    bits[#bits + 1] = (key and Core.DIFFICULTY[key][4] or "|cffcccccc") .. "Level " .. lv .. "|r"
+  end
   local base = Data.Status(id) -- the same test the rows use for "in your log"
   local state = (base == "done" or Data.RepeatableDone(id)) and "done" or base == "log" and "log" or "new"
   bits[#bits + 1] = state == "done" and "|cff66cc66Completed|r" or state == "log" and "|cff8fc4ffIn your quest log|r" or "|cffcccccc#" .. id .. "|r"
@@ -726,15 +950,276 @@ local function ShowObjectives(id)
     bits[#bits + 1] = "|cffe0a64aBreadcrumb" .. (to and (" to " .. (Data.Name(to) or ("quest " .. to))) or "") .. "|r"
   end
   popup.sub:SetText(table.concat(bits, " · "))
+  popup.chainBtn:SetShown(zoneMode and true or false)
   LayoutPopup(ObjectivePieces(id))
   popup:Show()
+end
+
+-- ---- the Zones tab ----
+local zoneBar
+-- The Zones tab's "By type | By giver" pair: the active one is lit and underlined, like Chains | Zones.
+local function SyncGroupTabs()
+  if not (frame and frame.tabType) then return end
+  local giver = ZS().byGiver and true or false
+  frame.tabType.under:SetShown(not giver)
+  frame.tabGiver.under:SetShown(giver)
+  frame.tabType.dim, frame.tabGiver.dim = giver, not giver
+  frame.tabType.paint(); frame.tabGiver.paint()
+end
+
+local CHIPS = { { "available", "Available" }, { "log", "In log" }, { "missed", "Missed" }, { "done", "Done" }, { "all", "All" } }
+local STATUS_COLOR = { done = "|cffa8c8ac", log = "|cff8fc4ff", available = "|cffffffff", locked = "|cffb4b4b4", missed = "|cff9a9488" }
+
+-- The filter chips above the list; made once, shown only on the Zones tab.
+local function GetZoneBar()
+  if zoneBar then return zoneBar end
+  zoneBar = CreateFrame("Frame", nil, content)
+  zoneBar:SetSize(CONTENT_W, 26)
+  zoneBar:SetPoint("TOPLEFT", content, "TOPLEFT", 0, 0)
+  zoneBar.chips = {}
+  local w = CONTENT_W / #CHIPS
+  for i, c in ipairs(CHIPS) do
+    local b = Button(zoneBar, c[2], w - 6, 22)
+    b:SetPoint("TOPLEFT", (i - 1) * w + 3, -2)
+    b.key, b.label = c[1], c[2]
+    b.under = Solid(b, "OVERLAY", BRONZE_LIT[1], BRONZE_LIT[2], BRONZE_LIT[3], 1)
+    b.under:SetPoint("BOTTOMLEFT", 6, -2); b.under:SetPoint("BOTTOMRIGHT", -6, -2); b.under:SetHeight(2)
+    b:SetScript("OnClick", function(self)
+      ZS().filter = self.key
+      if frame and frame.box then frame.box:ClearFocus() end
+      Render()
+    end)
+    zoneBar.chips[i] = b
+  end
+  return zoneBar
+end
+
+-- A left click on a zone row shows the objectives popup (its Chain button opens the chain); right-click is the waypoint.
+local function ZoneRowClick(self, button)
+  if frame and frame.box then frame.box:ClearFocus() end
+  if button == "RightButton" and self.entry then
+    local mode = (IsShiftKeyDown and IsShiftKeyDown() and "end") or (IsAltKeyDown and IsAltKeyDown() and "start") or nil
+    WaypointFor(self, mode)
+  elseif self.questId then
+    popupFor = self.questId
+    ShowObjectives(self.questId)
+  end
+end
+
+local function RenderZone()
+  Zones = Zones or ns.Zones
+  frame.back:Hide()
+  frame.toggle:Show()
+  SyncGroupTabs()
+  if Data.state == "error" or Zones.state == "error" then
+    frame.title:SetText("Zones")
+    frame.sub:SetText("|cffff6060" .. tostring(Data.error or Zones.error) .. "|r")
+    frame.stats:SetText("")
+    content:SetHeight(1)
+    return
+  end
+  if Zones.state ~= "ready" then
+    if Zones.state == "idle" then Zones.Ensure(Render) end
+    local p = Data.state == "building" and Data.progress * 0.5 or 0.5 + 0.5 * Zones.progress
+    frame.title:SetText("Zones")
+    frame.sub:SetText(("Reading QuestieDB… %d%%"):format(math.floor(p * 100)))
+    frame.stats:SetText("")
+    content:SetHeight(1)
+    return
+  end
+
+  local y, n = 0, 0
+  local function nextRow(h)
+    n = n + 1
+    local row = PlaceRow(n, y, h)
+    y = y + h
+    return row
+  end
+  local function header(text, count, color)
+    local row = nextRow(24)
+    row.name:ClearAllPoints(); row.name:SetPoint("TOPLEFT", 4, -5); row.name:SetWidth(CONTENT_W - 150)
+    row.name:SetText((color or "|cffffd100") .. text .. "|r")
+    if count then row.xp:SetText("|cff9aa0a8" .. count .. "|r") end
+    return row
+  end
+  local function finish(area)
+    content:SetHeight(math.max(y, 1))
+    if lastZoneShown ~= area then scroll:SetVerticalScroll(0); lastZoneShown = area end
+    UpdateThumb()
+    if popupFor then ShowObjectives(popupFor) end
+  end
+
+  if zonePick then
+    frame.title:SetText("Zones")
+    frame.sub:SetText(zoneNotice or "Pick a zone.")
+    frame.stats:SetText("")
+    for _, z in ipairs(zonePick) do
+      local row = header(z.name .. "  |cff808080" .. z.count .. " quests|r")
+      row.onClick = function() ZS().area = z.area; zonePick, zoneNotice, popupFor = nil, nil, nil; Render() end
+    end
+    return finish(nil)
+  end
+
+  local area = ZS().area
+  if not area then
+    area = Zones.CurrentArea()
+    if not area then local l = Zones.List(); area = l[1] and l[1].area end
+    ZS().area = area
+  end
+  if not area then
+    frame.title:SetText("Zones")
+    frame.sub:SetText("QuestieDB lists no zones with quests.")
+    frame.stats:SetText("")
+    content:SetHeight(1)
+    return
+  end
+  if not Zones.HasArea(area) then
+    frame.title:SetText(Data.ZoneName(area))
+    frame.sub:SetText("No quests start in this zone.")
+    frame.stats:SetText("")
+    content:SetHeight(1)
+    return
+  end
+
+  local model = Zones.Model(area)
+  local ev = Zones.Evaluate(model)
+  local t = ev.totals
+  local filter = ZS().filter
+  frame.title:SetText(model.name)
+  frame.sub:SetText(zoneNotice or ("%d quests in this zone"):format(t.quests))
+  frame.stats:SetText(("%d available · %d in your log · %d missed · %d done"):format(t.available, t.log, t.missed, t.done))
+  local bar = GetZoneBar()
+  bar:Show()
+  for _, b in ipairs(bar.chips) do
+    b.text:SetText(b.label .. " " .. (b.key == "all" and t.quests or t[b.key]))
+    b.under:SetShown(b.key == filter)
+  end
+  y = 30
+
+  local function statusIcon(row, status, indent)
+    local cell = STATUS_CELL[status == "missed" and "locked" or status]
+    if cell then
+      row.status:SetTexCoord(cell * 0.25, (cell + 1) * 0.25, 0, 1)
+      row.status:ClearAllPoints(); row.status:SetPoint("TOPLEFT", 24 + indent, -5)
+      row.status:SetDesaturated(status == "missed")
+      row.status:Show()
+    end
+  end
+  local function entryFor(id, name, status, detail)
+    local info = Zones.InfoOf(id)
+    return { id = id, name = name or info.name or ("Quest " .. id), level = info.level, reqLevel = info.reqLevel,
+      objective = info.objective, status = status, unmet = detail }, info
+  end
+  local function questRow(id, indent)
+    local s = ev.quest[id]
+    local entry, info = entryFor(id, nil, s.status, s.detail)
+    local sub
+    if s.status == "missed" then
+      sub = "|cffd9a04a" .. (s.detail[1] or "Missed") .. "|r"
+    elseif s.status == "locked" and #s.detail > 0 then
+      sub = "|cffff8a8aNeeds: " .. table.concat(s.detail, " · ") .. "|r"
+    end
+    local row = nextRow(sub and 40 or 28)
+    row.questId, row.entry, row.onClick = id, entry, ZoneRowClick
+    statusIcon(row, s.status, indent)
+    row.name:ClearAllPoints(); row.name:SetPoint("TOPLEFT", 46 + indent, -5); row.name:SetWidth(CONTENT_W - 46 - indent - 84)
+    row.name:SetText(Crumb(id) .. LevelTag(info.level) .. STATUS_COLOR[s.status] .. entry.name .. "|r  |cff808080#" .. id .. "|r")
+    if s.status == "missed" then row.tag:SetText("|cffd9a04aMissed|r"); row.tag:Show() end
+    if sub then row.sub:ClearAllPoints(); row.sub:SetPoint("TOPLEFT", 46 + indent, -21); row.sub:SetText(sub); row.sub:Show() end
+    return row
+  end
+  local function chainRow(c)
+    local ce = ev.chain[c]
+    local s = ev.quest[c.entry]
+    local entry, info = entryFor(c.entry, c.name, s.status, s.detail)
+    local row = nextRow(40)
+    row.questId, row.entry, row.onClick = c.entry, entry, ZoneRowClick
+    statusIcon(row, ce.status, 0)
+    row.name:ClearAllPoints(); row.name:SetPoint("TOPLEFT", 46, -5); row.name:SetWidth(CONTENT_W - 46 - 130)
+    row.name:SetText(LevelTag(c.minLevel or info.level) .. STATUS_COLOR[ce.status] .. c.name .. "|r  |cff808080#" .. c.entry .. "|r")
+    local levels = c.minLevel and (" · Lv " .. c.minLevel .. (c.maxLevel ~= c.minLevel and ("-" .. c.maxLevel) or "")) or ""
+    row.xp:SetText("|cff8fb4c8" .. c.parts .. " steps" .. levels .. "|r")
+    local bits = { ce.counts.done .. " of " .. #c.ids .. " done" }
+    if ce.counts.log > 0 then bits[#bits + 1] = "|cff8fc4ff" .. ce.counts.log .. " in your log|r" end
+    if ce.counts.missed > 0 then bits[#bits + 1] = "|cffd9a04a" .. ce.counts.missed .. " missed|r" end
+    row.sub:ClearAllPoints(); row.sub:SetPoint("TOPLEFT", 46, -21)
+    row.sub:SetText("|cff9aa0a8" .. table.concat(bits, " · ") .. "|r"); row.sub:Show()
+    if ce.status == "missed" then
+      row.tag:ClearAllPoints(); row.tag:SetPoint("TOPRIGHT", -2, -21)
+      row.tag:SetText("|cffd9a04aMissed|r"); row.tag:Show()
+    end
+    return row
+  end
+  local function visible(list)
+    local out = {}
+    for _, id in ipairs(list) do
+      if Zones.Matches(filter, ev.quest[id].status) then out[#out + 1] = id end
+    end
+    return out
+  end
+
+  local shown = 0
+  if not ZS().byGiver then
+    local chains, singles, groups, objTotal = {}, visible(model.singles), {}, 0
+    for _, c in ipairs(model.chains) do
+      if Zones.ChainMatches(filter, ev.chain[c]) then chains[#chains + 1] = c end
+    end
+    for _, g in ipairs(model.objGroups) do
+      local qs = visible(g.quests)
+      if #qs > 0 then groups[#groups + 1] = { g = g, qs = qs }; objTotal = objTotal + #qs end
+    end
+    if #chains > 0 then
+      header("Chains", #chains)
+      for _, c in ipairs(chains) do chainRow(c) end
+    end
+    if #singles > 0 then
+      header("Single quests", #singles)
+      for _, id in ipairs(singles) do questRow(id, 0) end
+    end
+    if #groups > 0 then
+      header("Start from objects and items", objTotal)
+      for _, e in ipairs(groups) do
+        header(e.g.name .. "  (" .. e.g.kind .. ")", nil, "|cffe0a64a")
+        for _, id in ipairs(e.qs) do questRow(id, 14) end
+      end
+    end
+    shown = #chains + #singles + objTotal
+  else
+    for _, g in ipairs(model.givers) do
+      local qs = visible(g.quests)
+      if #qs > 0 then
+        local key = area .. ":" .. g.kind .. ":" .. g.id
+        local open = not collapsed[key]
+        local done = 0
+        for _, id in ipairs(g.quests) do if ev.quest[id].status == "done" then done = done + 1 end end
+        local row = header((open and "- " or "+ ") .. g.name .. (g.kind ~= "npc" and ("  |cff9a9488(" .. g.kind .. ")|r") or ""), #g.quests .. " quests · " .. done .. " done")
+        row.onClick = function() collapsed[key] = open or nil; Render() end
+        if open then
+          for _, id in ipairs(qs) do
+            local qrow = questRow(id, 14)
+            if model.chainOf[id] then qrow.tag:SetText("|cff9aa0a8Chain|r"); qrow.tag:Show() end
+          end
+        end
+        shown = shown + #qs
+      end
+    end
+  end
+  if shown == 0 then
+    local row = nextRow(30)
+    row.name:ClearAllPoints(); row.name:SetPoint("TOPLEFT", 4, -8); row.name:SetWidth(CONTENT_W - 10)
+    row.name:SetText("|cff9aa0a8Nothing here with this filter. Try All.|r")
+  end
+  finish(area)
 end
 
 function Render()
   if not frame then return end
   frame.back:SetShown(current ~= nil and backTo ~= nil)
   if popup then popup:Hide() end -- shown again at the end of a full chain render
-  for _, row in ipairs(rows) do row:Hide(); ReleaseIcons(row) end
+  for _, row in ipairs(rows) do row:Hide(); row.here:Hide(); HideLinks(row); ReleaseIcons(row) end
+  if zoneBar then zoneBar:Hide() end
+  if zoneMode then return RenderZone() end
+  frame.toggle:Hide() -- the toggle holds the Zones tab's By type | By giver tabs
 
   if Data.state == "building" then
     frame.title:SetText("QuestThread")
@@ -757,7 +1242,7 @@ function Render()
       row.questId = hit.id
       local lv = QuestDB.questLevel and QuestDB.questLevel(hit.id)
       row.name:ClearAllPoints(); row.name:SetPoint("TOPLEFT", 4, -5); row.name:SetWidth(CONTENT_W - 10)
-      row.name:SetText(Crumb(hit.id) .. (lv and lv > 0 and ("|cff9d9d9d[" .. lv .. "]|r ") or "") .. hit.name .. "  |cff808080#" .. hit.id .. "|r")
+      row.name:SetText(Crumb(hit.id) .. LevelTag(lv) .. hit.name .. "  |cff808080#" .. hit.id .. "|r")
       y = y + 24
     end
     for i = #results + 1, #rows do rows[i]:Hide() end
@@ -786,8 +1271,8 @@ function Render()
   local level = UnitLevel and UnitLevel("player") or 0
   local function nameOf(id) return Data.Name(id) or ("Quest " .. id) end
   local maxed = GetMaxPlayerLevel and level >= GetMaxPlayerLevel()
-  local all, left = {}, {}
-  local totalXp, leftXp = 0, 0
+  local all = {}
+  local totalXp = 0
   local itemSeen, itemList = {}, {}
   for _, layer in ipairs(chain.layers) do
     for _, e in ipairs(layer) do
@@ -798,11 +1283,9 @@ function Render()
       e.status, e.unmet = Core.StatusOf(e, base == "done", base == "log", Data.IsDone, level, nameOf)
       all[#all + 1] = e
       totalXp = totalXp + e.xp
-      if e.status ~= "done" then left[#left + 1] = e; leftXp = leftXp + e.xp end
     end
   end
-  local counted = showRemaining and left or all
-  for _, e in ipairs(counted) do
+  for _, e in ipairs(all) do
     for _, id in ipairs(e.items) do
       if not itemSeen[id] then itemSeen[id] = true; itemList[#itemList + 1] = id end
     end
@@ -813,13 +1296,8 @@ function Render()
   frame.title:SetText(startName)
   local part = chain.currentLayer > 0 and chain.parts > 0 and (" · step " .. chain.currentLayer .. " of " .. chain.parts) or ""
   frame.sub:SetText(("Quest %d%s%s"):format(current, part, chain.truncated and " · chain is large, showing the nearest quests" or ""))
-  local xpTotal = showRemaining and leftXp or totalXp
-  local quests = showRemaining and #left or #all
-  frame.stats:SetText(("%s: %d quests · %s%s · %d reward items"):format(
-    showRemaining and "Remaining" or "Whole chain", quests,
-    maxed and "no XP at max level" or ("~" .. Num(xpTotal) .. " XP at level " .. level),
-    "", #itemList))
-  frame.toggle.text:SetText(showRemaining and "Show whole chain" or "Show remaining")
+  frame.stats:SetText(("Whole chain: %d quests · %s · %d reward items"):format(
+    #all, maxed and "no XP at max level" or ("~" .. Num(totalXp) .. " XP at level " .. level), #itemList))
 
   local y, n, currentY = 0, 0, nil
   local function nextRow(h)
@@ -832,10 +1310,10 @@ function Render()
   -- Summary row: every distinct reward item.
   local iconLines = math.max(1, math.ceil(#itemList / 16))
   local summary = nextRow(#itemList == 0 and 42 or (22 + iconLines * (ICON + 3) + 8))
-  summary.name:SetText("Item rewards across " .. (showRemaining and "the rest of the chain" or "the chain"))
+  summary.name:SetText("Item rewards across the chain")
   summary.name:SetWidth(CONTENT_W - 10)
   summary.name:ClearAllPoints(); summary.name:SetPoint("TOPLEFT", 4, -5)
-  local repText = SumReputation(counted)
+  local repText = SumReputation(all)
   if #itemList == 0 then
     summary.rep:SetText("No item rewards recorded in QuestieDB for these quests.")
     summary.rep:ClearAllPoints(); summary.rep:SetPoint("TOPLEFT", 4, -22); summary.rep:Show()
@@ -866,7 +1344,7 @@ function Render()
         else
           cSub = "|cff9aa0a8Optional: leads into step " .. li .. "|r"
         end
-        local cWhere = WhereText(c)
+        local cWhere = WhereSegments(c)
         local crow = nextRow(28 + 12 + (cWhere and 12 or 0))
         crow.questId, crow.entry = c.id, c
         crow.num:SetText("»")
@@ -877,7 +1355,7 @@ function Render()
           crow.status:Show()
         end
         crow.name:ClearAllPoints(); crow.name:SetPoint("TOPLEFT", 60, -5); crow.name:SetWidth(CONTENT_W - 60 - 84)
-        local cLvl = c.level and c.level > 0 and ("|cff9d9d9d[" .. c.level .. "]|r ") or ""
+        local cLvl = LevelTag(c.level)
         local cColor = (over or c.status == "done") and "|cff8a9a8c" or (c.status == "locked" and "|cffb4b4b4" or "|cffffffff")
         crow.tag:SetText("|cffe0a64aBreadcrumb|r"); crow.tag:Show()
         crow.name:SetText(Crumb(c.id) .. cLvl .. cColor .. c.name .. "|r  |cff808080#" .. c.id .. "|r")
@@ -885,7 +1363,7 @@ function Render()
         crow.sub:SetText(cSub); crow.sub:Show()
         if cWhere then
           crow.where:ClearAllPoints(); crow.where:SetPoint("TOPLEFT", 60, -33)
-          crow.where:SetText(cWhere); crow.where:Show()
+          PlaceSegments(crow.where, crow, cWhere, CONTENT_W - 60 - 8)
         end
         crow.bar:SetVertexColor(0.88, 0.65, 0.29, 0.8); crow.bar:Show()
       end
@@ -899,8 +1377,8 @@ function Render()
       if #(e.unmet or {}) > 0 then sub[#sub + 1] = "|cffff8a8aNeeds: " .. table.concat(e.unmet, " · ") .. "|r" end
       local subH = #sub > 0 and 12 or 0
       -- Where it happens: the zones of its kills, objects and drops (or where it is handed in).
-      local whereText = WhereText(e)
-      local whereH = whereText and 12 or 0
+      local whereSegs = WhereSegments(e)
+      local whereH = whereSegs and 12 or 0
       local row = nextRow(28 + subH + whereH + (hasItems and rowLines * (ICON + 3) or 0))
       row.questId = e.id
       row.entry = e
@@ -911,7 +1389,7 @@ function Render()
         row.status:Show()
       end
       local color = isCurrent and "|cffffd100" or (e.status == "done" and "|cffa8c8ac" or (e.status == "locked" and "|cffb4b4b4" or "|cffffffff"))
-      local lvl = e.level and e.level > 0 and ("|cff9d9d9d[" .. e.level .. "]|r ") or ""
+      local lvl = LevelTag(e.level)
       -- A repeatable quest: its ID is green once done, and a tag says it repeats (and how often you did it).
       local idColor, tag = "|cff808080", ""
       local rep = Data.RepeatInfo(e.id)
@@ -925,9 +1403,15 @@ function Render()
       end
       row.name:SetText(Crumb(e.id) .. lvl .. color .. e.name .. "|r  " .. idColor .. "#" .. e.id .. "|r" .. tag)
       if #sub > 0 then row.sub:SetText(table.concat(sub, "  ·  ")); row.sub:Show() end
-      if whereText then
+      if isCurrent then
+        row.subNormal = table.concat(sub, "  ·  ")
+        sub[1] = "|cffffffffYou are here|r" -- the lit-up version, while the mouse is over it
+        row.subHot = table.concat(sub, "  ·  ")
+        row.here:SetWidth(HereWidth()); row.here:Show()
+      end
+      if whereSegs then
         row.where:ClearAllPoints(); row.where:SetPoint("TOPLEFT", 46, -(21 + subH))
-        row.where:SetText(whereText); row.where:Show()
+        PlaceSegments(row.where, row, whereSegs, CONTENT_W - 46 - 8)
       end
       if e.xp > 0 then
         row.xp:SetText((e.xpExact and "" or "~") .. Num(e.xp) .. " XP")
@@ -961,7 +1445,7 @@ local poller
 local function WatchBuild()
   poller = poller or CreateFrame("Frame")
   poller:SetScript("OnUpdate", function(self)
-    if Data.state == "building" then
+    if Data.state == "building" or (zoneMode and Zones.state == "building") then
       Render()
     else
       self:SetScript("OnUpdate", nil)
@@ -990,12 +1474,16 @@ local function Create()
   if pos then f:SetPoint(pos[1], UIParent, pos[2], pos[3], pos[4]) else f:SetPoint("CENTER", UIParent, "CENTER", 0, 0) end
 
   Boxed(f, true)
-  f:SetBackdropColor(0.05, 0.05, 0.05, 0.95)
+  f:SetBackdropColor(0.055, 0.045, 0.035, 0.96) -- FlareUI's warm dark, not neutral grey
+  -- a faint warm band behind the title and controls
+  f.wash = Solid(f, "BACKGROUND", 0.55, 0.42, 0.24, 0.07)
+  f.wash:SetPoint("TOPLEFT", 4, -4); f.wash:SetPoint("TOPRIGHT", -4, -4); f.wash:SetHeight(66)
 
   f.title = Text(f, "GameFontNormalLarge")
   f.title:SetPoint("TOPLEFT", 14, -12); f.title:SetWidth(WIDTH - 120)
   f.sub = Text(f, "GameFontHighlightSmall")
   f.sub:SetPoint("TOPLEFT", 14, -34); f.sub:SetWidth(WIDTH - 28)
+  f.sub:SetTextColor(0.78, 0.74, 0.66) -- softer than the white of the row names
   f.stats = Text(f, "GameFontNormalSmall")
   f.stats:SetPoint("TOPLEFT", 14, -52); f.stats:SetWidth(WIDTH - 28)
 
@@ -1018,54 +1506,217 @@ local function Create()
   f.back = back
 
   local box = CreateFrame("EditBox", nil, f, "BackdropTemplate")
-  box:SetSize(WIDTH - 28 - 130, 24)
+  box:SetSize(190, 24)
   box:SetPoint("TOPLEFT", 14, -80)
   box:SetAutoFocus(false)
   box:SetFontObject("ChatFontNormal")
   box:SetTextInsets(8, 8, 0, 0)
   Boxed(box, true)
   box:SetBackdropColor(0, 0, 0, 0.5)
-  box:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+  box:SetScript("OnEscapePressed", function(self) if f.hideSuggest then f.hideSuggest() end; self:ClearFocus() end)
   box:SetScript("OnEnterPressed", function(self)
+    local s = f.suggest
+    if zoneMode and s and s:IsShown() and s.sel and s.list then -- a suggestion is highlighted: that one
+      local z = s.list[s.sel]
+      self:SetText(z.name)
+      self:ClearFocus()
+      f.hideSuggest()
+      return UI.OpenZoneText(z.name)
+    end
+    if f.hideSuggest then f.hideSuggest() end
     self:ClearFocus()
-    UI.OpenText(self:GetText())
+    if zoneMode then UI.OpenZoneText(self:GetText()) else UI.OpenText(self:GetText()) end
   end)
   f.box = box
 
   local hint = Text(box, "GameFontDisableSmall")
   hint:SetPoint("LEFT", 8, 0)
   hint:SetText("Quest ID, link or name")
-  box:SetScript("OnTextChanged", function(self) hint:SetShown(self:GetText() == "") end)
+  f.hint = hint
 
-  local toggle = Button(f, "Show remaining", 104, 22)
-  toggle:SetPoint("LEFT", box, "RIGHT", 14, 0)
-  toggle:SetScript("OnClick", function() showRemaining = not showRemaining; Render() end)
+  -- Zone name autocomplete (Zones tab): a list under the box. Arrows move in it, Tab completes, Enter picks.
+  local SUGGEST_ROW = 20
+  local suggest = CreateFrame("Frame", nil, f, "BackdropTemplate")
+  suggest:SetFrameLevel(f:GetFrameLevel() + 50)
+  suggest:SetPoint("TOPLEFT", box, "BOTTOMLEFT", 0, -2)
+  Boxed(suggest, true)
+  suggest:SetBackdropColor(0.05, 0.05, 0.05, 0.98)
+  suggest.rows = {}
+  suggest:Hide()
+  f.suggest = suggest
+  local function HideSuggest() suggest:Hide(); suggest.sel, suggest.list = nil, nil end
+  f.hideSuggest = HideSuggest
+  local function Highlight()
+    for i, r in ipairs(suggest.rows) do r.hl:SetShown(i == suggest.sel) end
+  end
+  local function PickZone(z)
+    box:SetText(z.name)
+    box:ClearFocus()
+    HideSuggest()
+    UI.OpenZoneText(z.name)
+  end
+  local function UpdateSuggest()
+    local Z = Zones or ns.Zones
+    local text = box:GetText()
+    local list = (zoneMode and text ~= "" and Z and Z.state == "ready") and Z.Suggest(text, 8) or {}
+    if #list == 0 then return HideSuggest() end
+    suggest.list, suggest.sel = list, nil
+    for i, z in ipairs(list) do
+      local r = suggest.rows[i]
+      if not r then
+        r = CreateFrame("Button", nil, suggest)
+        r:SetHeight(SUGGEST_ROW)
+        r:SetPoint("TOPLEFT", 4, -4 - (i - 1) * SUGGEST_ROW)
+        r:SetPoint("TOPRIGHT", -4, -4 - (i - 1) * SUGGEST_ROW)
+        r.hl = Solid(r, "BACKGROUND", BRONZE_HOVER[1], BRONZE_HOVER[2], BRONZE_HOVER[3], 0.3)
+        r.hl:SetAllPoints(); r.hl:Hide()
+        r.text = Text(r, "GameFontHighlightSmall")
+        r.text:SetPoint("LEFT", 6, 0); r.text:SetWidth(170)
+        r.index = i
+        r:SetScript("OnClick", function(self) PickZone(self.zone) end)
+        r:SetScript("OnEnter", function(self) suggest.sel = self.index; Highlight() end)
+        suggest.rows[i] = r
+      end
+      r.zone = z
+      r.text:SetText(z.name .. "  |cff808080" .. z.count .. "|r")
+      r:Show()
+    end
+    for i = #list + 1, #suggest.rows do suggest.rows[i]:Hide() end
+    suggest:SetSize(190, 8 + #list * SUGGEST_ROW)
+    suggest:Show()
+    Highlight()
+  end
+  box:SetScript("OnTextChanged", function(self, userInput)
+    hint:SetShown(self:GetText() == "")
+    if not zoneMode then HideSuggest() elseif userInput then UpdateSuggest() end
+  end)
+  box:SetScript("OnArrowPressed", function(_, key)
+    if not (suggest:IsShown() and suggest.list) then return end
+    local n = #suggest.list
+    if key == "DOWN" then suggest.sel = ((suggest.sel or 0) % n) + 1
+    elseif key == "UP" then suggest.sel = ((suggest.sel or 1) - 2) % n + 1 end
+    Highlight()
+  end)
+  box:SetScript("OnTabPressed", function(self)
+    if not (suggest:IsShown() and suggest.list) then return end
+    local z = suggest.list[suggest.sel or 1]
+    self:SetText(z.name)
+    self:SetCursorPosition(#z.name)
+    UpdateSuggest()
+  end)
+  box:SetScript("OnEditFocusLost", function(self)
+    -- a click on a suggestion has finished by then; anything else closes the list
+    if C_Timer and C_Timer.After then C_Timer.After(0.2, function() if not self:HasFocus() then HideSuggest() end end) else HideSuggest() end
+  end)
+
+  -- Chains | Zones: the window's two views.
+  local function Tab(label, anchor, dx, parent, w)
+    local b = Button(parent or f, label, w or 58, 22)
+    if anchor then b:SetPoint("LEFT", anchor, "RIGHT", dx, 0) end
+    b.under = Solid(b, "OVERLAY", BRONZE_LIT[1], BRONZE_LIT[2], BRONZE_LIT[3], 1)
+    b.under:SetPoint("BOTTOMLEFT", 6, -2); b.under:SetPoint("BOTTOMRIGHT", -6, -2); b.under:SetHeight(2)
+    return b
+  end
+  f.tabChain = Tab("Chains", box, 8)
+  f.tabZone = Tab("Zones", f.tabChain, 2)
+  f.tabChain:SetScript("OnClick", function() UI.ShowChains() end)
+  f.tabZone:SetScript("OnClick", function() UI.ShowZones() end)
+
+  -- By type | By giver: how the Zones tab groups its list (only shown there), at the right.
+  local toggle = CreateFrame("Frame", nil, f)
+  toggle:SetSize(116, 22)
+  toggle:SetPoint("TOPRIGHT", f, "TOPRIGHT", -16, -81)
   f.toggle = toggle
+  f.tabType = Tab("By type", nil, 0, toggle, 56)
+  f.tabType:SetPoint("LEFT", toggle, "LEFT", 0, 0)
+  f.tabGiver = Tab("By giver", f.tabType, 4, toggle, 56)
+  f.tabType:SetScript("OnClick", function()
+    if zoneMode then ZS().byGiver = false; Render() end
+  end)
+  f.tabGiver:SetScript("OnClick", function()
+    if zoneMode then ZS().byGiver = true; Render() end
+  end)
 
   local well = CreateFrame("Frame", nil, f, "BackdropTemplate")
   well:SetPoint("TOPLEFT", 10, -114)
   well:SetPoint("BOTTOMRIGHT", -10, 10)
   Boxed(well, true)
-  well:SetBackdropColor(0, 0, 0, 0.28)
-  f.track = Solid(f, "ARTWORK", BRONZE_MUTED[1], BRONZE_MUTED[2], BRONZE_MUTED[3], 0.25)
-  f.thumb = Solid(f, "OVERLAY", BRONZE[1], BRONZE[2], BRONZE[3], 1)
-  f.track:SetWidth(4); f.thumb:SetWidth(4)
-
+  well:SetBackdropColor(0.02, 0.015, 0.01, 0.5)
   scroll = CreateFrame("ScrollFrame", nil, f)
   scroll:SetPoint("TOPLEFT", well, "TOPLEFT", 8, -8)
   scroll:SetPoint("BOTTOMRIGHT", well, "BOTTOMRIGHT", -20, 8)
-  f.track:SetPoint("TOPRIGHT", scroll, "TOPRIGHT", 13, 0)
-  f.track:SetPoint("BOTTOMRIGHT", scroll, "BOTTOMRIGHT", 13, 0)
   scroll:SetScript("OnVerticalScroll", UpdateThumb)
   content = CreateFrame("Frame", nil, scroll)
   content:SetSize(CONTENT_W, 1)
   scroll:SetScrollChild(content)
+  f.scroll, f.content = scroll, content
+  local function ScrollTo(v)
+    local max = math.max(0, content:GetHeight() - scroll:GetHeight())
+    scroll:SetVerticalScroll(math.min(max, math.max(0, v)))
+  end
+  local function Wheel(_, delta) ScrollTo(scroll:GetVerticalScroll() - delta * 48) end
   scroll:EnableMouseWheel(true)
-  scroll:SetScript("OnMouseWheel", function(self, delta)
-    local max = math.max(0, content:GetHeight() - self:GetHeight())
-    local v = math.min(max, math.max(0, self:GetVerticalScroll() - delta * 48))
-    self:SetVerticalScroll(v)
+  scroll:SetScript("OnMouseWheel", Wheel)
+
+  -- the scroll bar: a track you can click, and a thumb you can drag
+  local bar = CreateFrame("Frame", nil, f)
+  bar:SetWidth(12)
+  bar:SetPoint("TOPLEFT", scroll, "TOPRIGHT", 4, 0)
+  bar:SetPoint("BOTTOMLEFT", scroll, "BOTTOMRIGHT", 4, 0)
+  bar:EnableMouse(true)
+  bar:EnableMouseWheel(true)
+  bar:SetScript("OnMouseWheel", Wheel)
+  f.bar = bar
+  f.track = Solid(bar, "BACKGROUND", BRONZE_MUTED[1], BRONZE_MUTED[2], BRONZE_MUTED[3], 0.25)
+  f.track:SetWidth(4)
+  f.track:SetPoint("TOP"); f.track:SetPoint("BOTTOM")
+  local thumb = CreateFrame("Button", nil, bar)
+  thumb:SetWidth(12)
+  thumb:EnableMouse(true)
+  thumb.tex = Solid(thumb, "OVERLAY", BRONZE[1], BRONZE[2], BRONZE[3], 1)
+  thumb.tex:SetWidth(6)
+  thumb.tex:SetPoint("TOP"); thumb.tex:SetPoint("BOTTOM")
+  f.thumb = thumb
+  bar:Hide()
+
+  local grab, over -- where in the thumb it was taken (px from its top); whether the mouse is over it
+  local function PaintThumb()
+    local c = grab and BRONZE_LIT or over and BRONZE_HOVER or BRONZE
+    thumb.tex:SetVertexColor(c[1], c[2], c[3], 1)
+  end
+  local function CursorBelowTop() -- px from the top of the bar to the mouse
+    local _, y = GetCursorPosition()
+    return bar:GetTop() - y / bar:GetEffectiveScale()
+  end
+  local function Release()
+    grab = nil
+    bar:SetScript("OnUpdate", nil)
+    PaintThumb()
+  end
+  local function Follow()
+    if IsMouseButtonDown and not IsMouseButtonDown("LeftButton") then return Release() end -- let go outside the window
+    ScrollTo(Core.ScrollForThumb(CursorBelowTop() - grab, thumb:GetHeight(), content:GetHeight(), scroll:GetHeight()))
+  end
+  local function Grab(at)
+    grab = at
+    bar:SetScript("OnUpdate", Follow)
+    PaintThumb()
+  end
+  f.releaseBar = Release
+  thumb:SetScript("OnEnter", function() over = true; PaintThumb() end)
+  thumb:SetScript("OnLeave", function() over = nil; PaintThumb() end)
+  thumb:SetScript("OnMouseDown", function(_, button)
+    if button ~= "LeftButton" then return end
+    Grab(CursorBelowTop() - (bar:GetTop() - thumb:GetTop()))
   end)
+  thumb:SetScript("OnMouseUp", Release)
+  -- a click on the empty track puts the thumb under the mouse, and carries on as a drag
+  bar:SetScript("OnMouseDown", function(_, button)
+    if button ~= "LeftButton" then return end
+    Grab(thumb:GetHeight() / 2)
+    Follow()
+  end)
+  bar:SetScript("OnMouseUp", Release)
 
   -- Escape closes the window the way Blizzard's own windows close. The window never takes keyboard
   -- input itself: SetPropagateKeyboardInput is blocked in combat, so a window that listens for keys
@@ -1077,15 +1728,30 @@ local function Create()
   -- A click anywhere else takes the typing focus off the search box, or WASD would type into it.
   f:SetScript("OnMouseDown", function() box:ClearFocus() end)
   -- Closing the window ends any hover, so the key listener and the link box go with it.
-  f:SetScript("OnHide", function() hoverRow = nil; ListenForKeys(false); HideLink() end)
+  f:SetScript("OnHide", function() hoverRow = nil; ListenForKeys(false); HideLink(); f.hideSuggest(); f.releaseBar() end)
   f:Hide()
   frame = f
   return f
 end
 
+-- The tabs, the box's hint and the toggle follow the mode.
+local function SetModeControls()
+  if not frame then return end
+  frame.hideSuggest()
+  frame.tabChain.under:SetShown(not zoneMode)
+  frame.tabZone.under:SetShown(zoneMode and true or false)
+  frame.tabChain.dim, frame.tabZone.dim = zoneMode and true or false, not zoneMode
+  frame.tabChain.paint(); frame.tabZone.paint()
+  frame.hint:SetText(zoneMode and "Zone name" or "Quest ID, link or name")
+  frame.toggle:SetShown(zoneMode and true or false)
+  SyncGroupTabs()
+end
+
 -- showObjectives: a click on a quest, which also opens the objectives popup for it.
 function UI.Open(questId, keepBack, showObjectives)
   Create()
+  if questId then zoneMode = false end
+  SetModeControls()
   current = questId and tonumber(questId) or current
   popupFor = showObjectives and current or nil
   notice, results = nil, nil
@@ -1108,6 +1774,8 @@ function UI.OpenIds(ids)
     return a.id < b.id
   end)
   current, results, notice, backTo, popupFor = nil, hits, ("%d quests share that icon."):format(#ids), nil, nil
+  zoneMode = false
+  SetModeControls()
   frame:Show()
   frame:Raise()
   Data.Ensure(Render)
@@ -1119,6 +1787,8 @@ function UI.OpenText(text)
   Create()
   local id, msg, hits = Data.Resolve(text)
   backTo, popupFor = nil, nil
+  zoneMode = false
+  SetModeControls()
   if not id then
     current, notice, results = nil, msg or "Enter a quest ID, link or name.", hits
   else
@@ -1131,6 +1801,61 @@ function UI.OpenText(text)
   if Data.state == "building" then WatchBuild() end
   Render()
 end
+
+-- The Chains tab.
+function UI.ShowChains()
+  Create()
+  zoneMode, zonePick, popupFor = false, nil, nil
+  SetModeControls()
+  Render()
+end
+
+-- The Zones tab, on an area (or the one you left it on, or the one you stand in).
+function UI.ShowZones(area)
+  Create()
+  Zones = Zones or ns.Zones
+  zoneMode, zonePick, zoneNotice, popupFor = true, nil, nil, nil
+  if area then ZS().area = area end
+  SetModeControls()
+  frame:Show()
+  frame:Raise()
+  Zones.Ensure(Render)
+  if Data.state == "building" or Zones.state == "building" then WatchBuild() end
+  Render()
+end
+
+-- Typed into the box on the Zones tab: nothing = the zone you stand in; one match opens it; several make a list.
+function UI.OpenZoneText(text)
+  Create()
+  Zones = Zones or ns.Zones
+  text = tostring(text or ""):match("^%s*(.-)%s*$")
+  zoneMode, popupFor = true, nil
+  SetModeControls()
+  frame:Show()
+  frame:Raise()
+  local function apply()
+    zonePick, zoneNotice = nil, nil
+    if text == "" then
+      local a = Zones.CurrentArea()
+      if a then ZS().area = a else zoneNotice = "Could not tell which zone you are in." end
+    else
+      local hits = Zones.Find(text)
+      if #hits == 0 then
+        zoneNotice = 'No zone named "' .. text .. '".'
+      elseif #hits == 1 or hits[1].name:lower() == text:lower() then
+        ZS().area = hits[1].area
+      else
+        zonePick, zoneNotice = hits, ('%d zones match "%s".'):format(#hits, text)
+      end
+    end
+    Render()
+  end
+  Zones.Ensure(apply)
+  if Data.state == "building" or Zones.state == "building" then WatchBuild() end
+  Render()
+end
+
+function UI.IsZoneMode() return zoneMode and true or false end
 
 -- Window size: 0.6 to 1.6, remembered. Returns the value used.
 function UI.SetScale(v)
@@ -1154,6 +1879,9 @@ end
 function UI.IsShown()
   return frame ~= nil and frame:IsShown()
 end
+
+-- The look-and-feel helpers, for the panel beside the map (MapPanel.lua).
+UI.Widgets = { Button = Button, Boxed = Boxed, Solid = Solid, Text = Text, LevelTag = LevelTag, Crumb = Crumb }
 
 function UI.Toggle()
   Create()

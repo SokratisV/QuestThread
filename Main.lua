@@ -295,23 +295,30 @@ end
 -- ---- slash command ----
 SLASH_QUESTTHREAD1 = "/qthread"
 SLASH_QUESTTHREAD2 = "/questthread"
+SLASH_QUESTTHREAD3 = "/qt"
 SlashCmdList["QUESTTHREAD"] = function(msg)
   msg = (msg or ""):match("^%s*(.-)%s*$")
   if msg == "resetbutton" then
     DB().button = nil
+    ns.MapPanel.ResetButton()
     if detailButton then PlaceDetailButton() end
-    Say("Detail-view button moved back to its default place.")
+    Say("Detail-view and map buttons moved back to their default places.")
   elseif msg == "minimap" then
     Say(ns.MinimapButton.Toggle() and "Minimap button shown." or "Minimap button hidden. Type /qthread minimap to show it again.")
   elseif msg == "reset" then
     UI.Reset()
     DB().button = nil
     ns.MinimapButton.Reset()
+    ns.MapPanel.ResetButton()
     if detailButton then PlaceDetailButton() end
     Say("Window and buttons put back (centre of the screen, normal size).")
   elseif msg:match("^scale") then
     local v = tonumber(msg:match("^scale%s+([%d%.]+)"))
     if v then Say(("Window scale set to %.2f."):format(UI.SetScale(v))) else Say("Usage: /qthread scale 1.2 (from 0.6 to 1.6)") end
+  elseif msg == "map" then
+    if not ns.MapPanel.Toggle() then Say("The map panel is hidden (or the map isn't available). Type /qthread map to show it again.") end
+  elseif msg == "zone" or msg == "zones" or msg:match("^zones?%s") then
+    UI.OpenZoneText(msg:match("^zones?%s+(.*)$") or "")
   elseif msg == "xpcheck" then
     local r = Data.XpCheck()
     if r.compared == 0 then
@@ -340,7 +347,9 @@ ev:SetScript("OnEvent", function(_, event, name)
     StartIconWatch()
     ns.QuestFrame.Init()
     ns.MinimapButton.Init(ToggleWindow)
+    ns.MapPanel.Init()
   end
   if event == "ADDON_LOADED" and name ~= "Blizzard_WorldMap" and name ~= "Blizzard_QuestMap" then return end
+  if event ~= "ADDON_LOADED" or name == "Blizzard_WorldMap" then ns.MapPanel.Init() end
   HookQuestLog()
 end)

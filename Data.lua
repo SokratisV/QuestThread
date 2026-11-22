@@ -104,6 +104,7 @@ function Data.Info(id)
     pre = QuestDB.preQuestGroup(id),
     preS = QuestDB.preQuestSingle(id),
     objective = QuestDB.objectivesText(id),
+    maxLevel = QuestDB.requiredMaxLevel and QuestDB.requiredMaxLevel(id) or nil,
   }
 end
 
@@ -173,20 +174,54 @@ function Data.Givers(id, which)
 end
 
 -- QuestieDB's zone tables (area id -> map id), or false when it has none.
+-- QuestieDB publishes these tables as text chunks ("return { [12] = 1429, ... }"), not as tables, so they are
+-- decoded once here. A table is used as it is (some builds may decode them already).
+local function decodeTable(v)
+  if type(v) == "table" then return v end
+  if type(v) ~= "string" then return nil end
+  local chunk = loadstring and loadstring(v)
+  if not chunk then return nil end
+  local ok, t = pcall(chunk)
+  return (ok and type(t) == "table") and t or nil
+end
+
 local zones
 local function zoneTables()
   if zones == nil then
     local z = LibQuestieDB and LibQuestieDB.Support and LibQuestieDB.Support.Get("ZoneDB")
     local p = type(z) == "table" and z.private or nil
-    zones = type(p) == "table" and p or false
+    if type(p) == "table" then
+      zones = {
+        areaToMap = decodeTable(p.areaIdToUiMapId) or {},
+        areaToMapOverride = decodeTable(p.areaIdToUiMapIdOverride) or {},
+        mapToArea = decodeTable(p.uiMapIdToAreaId) or {},
+        mapToAreaOverride = decodeTable(p.uiMapIdToAreaIdOverride) or {},
+      }
+    else
+      zones = false
+    end
   end
   return zones
 end
 
+-- The map to show for an area, or nil. QuestieDB's override table wins, and an override of 0 means "no map".
 function Data.UiMap(area)
   local z = zoneTables()
   if not z then return nil end
-  return (z.areaIdToUiMapIdOverride and z.areaIdToUiMapIdOverride[area]) or (z.areaIdToUiMapId and z.areaIdToUiMapId[area])
+  local m = z.areaToMapOverride[area]
+  if m == nil then m = z.areaToMap[area] end
+  if type(m) ~= "number" or m <= 0 then return nil end
+  return m
+end
+
+-- The area a map belongs to (the reverse of UiMap), or nil.
+function Data.AreaOfUiMap(uiMap)
+  local z = zoneTables()
+  if not z or type(uiMap) ~= "number" then return nil end
+  local a = z.mapToAreaOverride[uiMap]
+  if a == nil then a = z.mapToArea[uiMap] end
+  if type(a) ~= "number" or a <= 0 then return nil end
+  return a
 end
 
 -- The area's own name first (works for any area id), then the name of the map it belongs to.
@@ -321,6 +356,77 @@ function Data.XpCheck()
     end
   end
   return out
+end
+
+-- ---- the Dungeon Journal (the optional ForeverDungeonJournal addon) ----
+local journalDB, dungeonOf
+
+function Data.HasJournal()
+  local fdj = _G.ForeverDungeonJournal_NS
+  return type(fdj) == "table" and type(fdj.DB) == "table" and type(fdj.OpenQuestPage) == "function"
+end
+
+-- The dungeon (by the journal's own name for it) a quest is done in, or nil. The journal's quest lists decide;
+-- a quest listed under several dungeons goes to the first by name.
+function Data.DungeonOf(id)
+  if not Data.HasJournal() then return nil end
+  local db = _G.ForeverDungeonJournal_NS.DB
+  if journalDB ~= db then
+    journalDB, dungeonOf = db, {}
+    local names = {}
+    for name, d in pairs(db) do
+      if type(name) == "string" and type(d) == "table" then names[#names + 1] = name end
+    end
+    table.sort(names)
+    for _, name in ipairs(names) do
+      for _, q in ipairs(db[name].quests or {}) do
+        if type(q) == "table" and type(q.id) == "number" and dungeonOf[q.id] == nil then dungeonOf[q.id] = name end
+      end
+    end
+  end
+  return dungeonOf[id]
+end
+
+-- Opens the journal on the quest's page in its dungeon. Returns true, or false and a message.
+function Data.OpenInJournal(id)
+  local name = Data.DungeonOf(id)
+  if not name then return false, "That quest isn't in the Dungeon Journal." end
+  local ok, err = pcall(_G.ForeverDungeonJournal_NS.OpenQuestPage, name, id)
+  if not ok then return false, "Couldn't open the Dungeon Journal: " .. tostring(err) end
+  return true
+end
+
+-- Opens the world map on an area. Returns true, or false and a message.
+function Data.OpenMapAt(area)
+  local m = Data.UiMap(area)
+  if not (m and C_Map and C_Map.OpenWorldMap) then return false, "No map is known for " .. Data.ZoneName(area) .. "." end
+  local ok, err = pcall(C_Map.OpenWorldMap, m)
+  if not ok then return false, "Couldn't open the map: " .. tostring(err) end
+  return true
+end
+
+-- Opens the quest log on a quest in your log, with it selected. Returns true, or false and a message.
+-- Blizzard's own function does the work (the one the game's quest tracker uses); there are fallbacks for clients
+-- that name it differently.
+function Data.OpenInQuestLog(id)
+  if InCombatLockdown and InCombatLockdown() then return false, "The quest log can't be opened in combat." end
+  local index = C_QuestLog and C_QuestLog.GetLogIndexForQuestID and C_QuestLog.GetLogIndexForQuestID(id)
+  if not index then return false, "That quest isn't in your quest log." end
+  local ok, err = pcall(function()
+    if QuestMapFrame_OpenToQuestDetails then
+      QuestMapFrame_OpenToQuestDetails(id)
+    elseif QuestMapFrame_ShowQuestDetails then
+      if ToggleQuestLog and not (QuestMapFrame and QuestMapFrame:IsVisible()) then ToggleQuestLog() end
+      QuestMapFrame_ShowQuestDetails(id)
+    elseif SelectQuestLogEntry and QuestLogFrame and ShowUIPanel then
+      SelectQuestLogEntry(index)
+      ShowUIPanel(QuestLogFrame)
+    else
+      error("no quest log function on this client")
+    end
+  end)
+  if not ok then return false, "Couldn't open the quest log: " .. tostring(err) end
+  return true
 end
 
 -- "done", "log", or nil.

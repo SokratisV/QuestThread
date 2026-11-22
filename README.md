@@ -42,6 +42,14 @@ While the window is open it follows whichever quest you open in the quest log. E
   for example "Kill Mosshoof Courser, Dustwallow Marsh" or "Collect Soothing Spices (from Jarl, ...)".
 - **Hover a step** for its objective, what locks it (a level or the quests you still need), and who starts
   and ends it with the zone and coordinates.
+- **Click "You are here"** (under the quest you opened) to open your quest log with that quest selected. It works for
+  quests that are in your log; out of combat only.
+- **Places are links.** The blue line under a quest lists its zones, and each zone name is clickable: it opens the
+  world map on that area (the same line sits in the objectives popup under "Where"). When the optional
+  **DungeonJournal** addon is installed and lists the quest, the line starts with an amber "Dungeon: <name>" that
+  opens the journal on that quest's page in its dungeon. Without the journal there is simply no dungeon link.
+- Clickable text ("You are here", zone names, the dungeon) is **underlined** like a link, and the line lights up
+  white while the mouse is over it.
 - **Right-click a step** to open the map and set a waypoint where its objectives are: the middle of the crowd
   of spawns in its main zone for a kill, a collected item (where it drops) or an object. A step with no known
   objective goes to its quest giver. **Shift+right-click** goes to where the quest is handed in and
@@ -54,7 +62,6 @@ While the window is open it follows whichever quest you open in the quest log. E
   does Escape. This works like Wowhead Quick Link and is only listening while the mouse is on a quest and you are
   out of combat, so it never takes your movement keys.
 - XP per quest and for the chain, reputation totals, and every reward item (hover for its tooltip).
-- **Show remaining** totals only what you haven't finished.
 - **Breadcrumb quests:** an optional quest that hands you a chain quest earlier appears as an indented
   "Breadcrumb" row right above the quest it leads into, with its own status icon, zone and ID (Ctrl+C, click and
   tooltip work as on any row). It says "No longer needed" once you already have or finished the quest it leads
@@ -68,9 +75,33 @@ While the window is open it follows whichever quest you open in the quest log. E
   says what to kill and collect but not how many, so the numbers can only come from the quest log. The panel
   follows the quest you click, closes with its X, and does not open when you open a quest some other way.
 
+## Zones (version 1.1)
+The **Zones** tab, next to **Chains** under the title, lists every quest that **starts** in a zone, whatever
+chain it belongs to. A quest also counts for the zone your quest log files it under, so a quest you hold always
+shows under its own zone's **In log** chip, even when its giver stands in another zone or has no known spawn. Pick a zone by typing its name, or open it from a zone link (**Ctrl+click** a blue zone
+name) or with `/qthread zone <name>`; with no name it shows the zone you are standing in.
+- **Filter chips:** **Available**, **In log**, **Missed**, **Done**, **All**, each with its count.
+- **Missed** means a quest you can no longer do (or have outgrown), and the row says why: you already did a later
+  step of its chain ("Skipped"), a quest it excludes is done or in your log, you are over its level cap, or it
+  is grey to you ("Outleveled"). Quests meant for another race, class or faction are left out of the list.
+- **By type** (the default) shows chains (one row each, with its steps, level range and how much is done),
+  then single quests, then **the objects and items that start quests** (a poster, a dropped note) with the quest
+  each one starts. **By giver** (the second tab at the right, lit when active like Chains and Zones) shows one fold-out header per NPC, object or item,
+  with the quests it gives.
+- Click a row for the objectives popup; its **Chain** button opens the chain. Right-click is the waypoint, as
+  everywhere.
+- **Map panel:** the QuestThread button on the world map (Shift-drag to move it) or `/qthread map` opens the same
+  list in a panel beside the map, for the zone the map is showing, and it follows the map as you move between
+  zones. A click opens the quest in QuestThread's window. The filter is shared with the Zones tab.
+
+Every quest level in the window is coloured the way the game colours it for you: red (5 or more levels above
+you), orange (3-4 above), yellow (within 2), green (still worth XP) and grey (trivial).
+
 ## Commands
-- `/qthread` (or `/questthread`): open or close the window
+- `/qthread` (or `/qt`, or `/questthread`): open or close the window
 - `/qthread <part of a name | ID | quest link>`: look a quest up
+- `/qthread zone [name]`: the Zones tab, on that zone (no name: the zone you are in)
+- `/qthread map`: show or hide the panel beside the world map
 - `/qthread scale 1.2`: window size (0.6 to 1.6)
 - `/qthread minimap`: hide or show the minimap button
 - `/qthread reset`: window back to the middle of the screen, normal size, and the buttons (quest log, minimap) to their places
