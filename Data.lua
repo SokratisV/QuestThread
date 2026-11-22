@@ -107,15 +107,69 @@ function Data.Info(id)
     maxLevel = QuestDB.requiredMaxLevel and QuestDB.requiredMaxLevel(id) or nil,
     raceMask = QuestDB.requiredRaces and QuestDB.requiredRaces(id) or nil,
     classMask = QuestDB.requiredClasses and QuestDB.requiredClasses(id) or nil,
+    skill = QuestDB.requiredSkill and QuestDB.requiredSkill(id) or nil,
+    ranks = QuestDB.requiredRanks and QuestDB.requiredRanks(id) or nil,
   }
 end
 
--- Your race and class ids, for leaving out what is meant for others (nil when the client will not say).
-function Data.PlayerIds()
+-- The professions you have learned, by skill line id: set (true each), decisive. decisive is false when the client
+-- could not list them (then only the ones it positively reported are in the set, and nothing is ruled out).
+local function readSkills()
+  local have, decisive = {}, false
+  local function number(v)
+    if type(v) ~= "number" or (issecretvalue and issecretvalue(v)) then return nil end
+    return v
+  end
+  -- GetProfessions lists every learned profession (primary and secondary) whatever the skill panel has folded away
+  if type(GetProfessions) == "function" and type(GetProfessionInfo) == "function" then
+    local okP, p1, p2, p3, p4, p5, p6 = pcall(GetProfessions)
+    if okP then
+      decisive = true
+      for _, index in pairs({ p1, p2, p3, p4, p5, p6 }) do
+        local ok, _, _, _, _, _, _, line = pcall(GetProfessionInfo, index)
+        line = ok and number(line) or nil
+        if line then have[line] = true end
+      end
+    end
+  end
+  local info = C_SkillInfo
+  if info and info.GetSkillLineInfoByID then
+    for id in pairs(Core.PROFESSIONS) do
+      local ok, r = pcall(info.GetSkillLineInfoByID, id)
+      if ok and type(r) == "table" and (number(r.rank) or 0) > 0 then have[id] = true end
+    end
+  end
+  return have, decisive
+end
+
+-- WoW Forever's own race mask bits, when QuestieDB publishes them (it does: the Skyborne races are not at id - 1).
+local function adoptRaceMasks()
+  local enum = LibQuestieDB and LibQuestieDB.Enum
+  local t = enum and enum.raceMaskById
+  if type(t) == "table" then
+    for id, bit in pairs(t) do if type(id) == "number" and type(bit) == "number" then Core.raceMaskById[id] = bit end end
+  end
+end
+-- Who you are, for leaving out what is not for you: { race, class, hasSkill(id), key } (see Core.Allowed). `key`
+-- changes when your learned professions do, so cached lists know when to be rebuilt.
+function Data.Who()
   local race = UnitRace and select(3, UnitRace("player")) or nil
   local class = UnitClass and select(3, UnitClass("player")) or nil
-  return race, class
+  adoptRaceMasks()
+  local have, decisive = readSkills()
+  local ids = {}
+  for id in pairs(have) do ids[#ids + 1] = id end
+  table.sort(ids)
+  return {
+    race = race, class = class, key = (decisive and "d" or "u") .. table.concat(ids, ","),
+    hasSkill = function(id)
+      if have[id] then return true end
+      if decisive then return false end
+      return nil
+    end,
+  }
 end
+
 
 function Data.IsDone(id)
   return C_QuestLog and C_QuestLog.IsQuestFlaggedCompleted and C_QuestLog.IsQuestFlaggedCompleted(id) and true or false

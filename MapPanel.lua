@@ -8,7 +8,6 @@ ns.MapPanel = MP
 
 local PANEL_W, ROW_H = 300, 22
 local STATUS_TEX = "Interface\\AddOns\\QuestThread\\Status.tga"
-local STATUS_CELL = { done = 0, log = 1, available = 2, locked = 3 }
 local STATUS_COLOR = { done = "|cffa8c8ac", log = "|cff8fc4ff", available = "|cffffffff", locked = "|cffb4b4b4", missed = "|cff9a9488" }
 local STATUS_TEXT = {
   done = { "Completed", 0.4, 0.8, 0.4 }, log = { "In your quest log", 0.56, 0.77, 1 },
@@ -125,9 +124,9 @@ local function Layout(items, ev, model)
       r.entry = { id = id, name = name, level = level, status = item.chain and ev.chain[item.chain].status or status,
         unmet = s.detail, grey = s.greyNote, objective = info.objective }
       local dim = status == "missed"
-      local cell = STATUS_CELL[dim and "locked" or status]
+      local cell = W.StatusCell(dim and "locked" or status, (not item.chain) and id or nil)
       if cell then
-        r.icon:SetTexCoord(cell * 0.25, (cell + 1) * 0.25, 0, 1)
+        W.SetCell(r.icon, cell)
         r.icon:ClearAllPoints(); r.icon:SetPoint("LEFT", 2 + indent, 0)
         r.icon:SetDesaturated(dim)
         r.icon:Show()

@@ -138,7 +138,7 @@ local function giverName(kind, id)
   return Data.ItemName(id)
 end
 
-local playerIds = Data.PlayerIds
+-- (who you are, for leaving out what is not for you: Data.Who())
 
 local function byLevelThenName(a, b)
   local ia, ib = infoOf(a), infoOf(b)
@@ -235,18 +235,19 @@ end
 -- { area, name, quests = {ids that start here and you can take}, chains = { { ids, here, entry, parts, minLevel,
 --   maxLevel, name } }, singles = {ids started by an NPC here}, objGroups = { { kind, id, name, quests } } (the
 --   rest: started by an object or an item), givers = { { kind, id, name, quests } }, chainOf = { [id] = chain } }
--- Quests meant for other races or classes are left out.
+-- Quests not meant for you (another race or class, a profession you have not learned) are left out; the model is
+-- rebuilt when your learned professions change.
 function Zones.Model(area)
+  local who = Data.Who()
   local hit = models[area]
-  if hit then return hit end
+  if hit and hit.whoKey == who.key then return hit end
   local idx = Data.index
-  local raceId, classId = playerIds()
   local ok, here, hereList, npcHere = {}, {}, {}, {}
   local givers, gorder = {}, {}
   for _, e in ipairs(starts[area] or {}) do
     local q = e.q
     if ok[q] == nil then
-      ok[q] = Core.Eligible(QuestDB.requiredRaces and QuestDB.requiredRaces(q), QuestDB.requiredClasses and QuestDB.requiredClasses(q), raceId, classId) and true or false
+      ok[q] = Core.Allowed(infoOf(q), who) and true or false
     end
     if ok[q] then
       if not here[q] then here[q] = true; hereList[#hereList + 1] = q end
@@ -266,7 +267,7 @@ function Zones.Model(area)
   local seen, chains, singles, others, chainOf = {}, {}, {}, {}, {}
   for _, q in ipairs(hereList) do
     if not seen[q] then
-      local chain = (not idx.breadcrumb[q]) and Core.Chain(idx, q, infoOf, { race = raceId, class = classId }) or nil
+      local chain = (not idx.breadcrumb[q]) and Core.Chain(idx, q, infoOf, who) or nil
       if chain and chain.quests >= 2 then
         local c = { ids = {}, here = {}, parts = chain.parts, truncated = chain.truncated }
         for _, layer in ipairs(chain.layers) do
@@ -310,7 +311,7 @@ function Zones.Model(area)
   table.sort(gorder, function(a, b) if a.name ~= b.name then return a.name < b.name end return a.id < b.id end)
 
   hit = { area = area, name = Data.ZoneName(area), quests = hereList, chains = chains, singles = singles,
-    objGroups = objGroups, givers = gorder, chainOf = chainOf }
+    objGroups = objGroups, givers = gorder, chainOf = chainOf, whoKey = who.key }
   models[area] = hit
   return hit
 end

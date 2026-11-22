@@ -12,7 +12,20 @@ local ICON = 22
 local FLAT = "Interface\\Buttons\\WHITE8X8"
 -- Step status icons: four 32x32 cells in one sheet (tools/make-status-icons.py).
 local STATUS_TEX = "Interface\\AddOns\\QuestThread\\Status.tga"
-local STATUS_CELL = { done = 0, log = 1, available = 2, locked = 3 }
+-- Status.tga is eight 32-px cells side by side (five drawn). "again" is the green "!" of a repeatable quest you have
+-- already completed once and can take again.
+local STATUS_CELLS = 8
+local STATUS_CELL = { done = 0, log = 1, available = 2, locked = 3, again = 4 }
+
+-- The cell for a quest's status: the gold "!" of an available quest turns green for a repeatable done at least once.
+local function StatusCell(status, id)
+  if status == "available" and id and Data.RepeatableDone(id) then return STATUS_CELL.again end
+  return STATUS_CELL[status]
+end
+
+local function SetCell(tex, cell)
+  tex:SetTexCoord(cell / STATUS_CELLS, (cell + 1) / STATUS_CELLS, 0, 1)
+end
 
 -- Look and colours follow FlareUI's windows: a dark panel, a thin bronze edge (FlareUI's own
 -- Thin.tga border, MIT-licensed, copied here), Blizzard-yellow titles, and Blizzard's grey dropdown
@@ -975,14 +988,18 @@ end
 
 -- ---- the Zones tab ----
 local zoneBar
--- The Zones tab's "By type | By giver" pair: the active one is lit and underlined, like Chains | Zones.
+-- The Zones tab's "By type | By giver | Crumbs" set: the active one is lit and underlined, like Chains | Zones.
+-- Crumbs lists only the breadcrumb quests.
 local function SyncGroupTabs()
   if not (frame and frame.tabType) then return end
-  local giver = ZS().byGiver and true or false
-  frame.tabType.under:SetShown(not giver)
+  local crumbs = ZS().crumbs and true or false
+  local giver = (not crumbs) and ZS().byGiver and true or false
+  local plain = (not crumbs) and not giver
+  frame.tabType.under:SetShown(plain)
   frame.tabGiver.under:SetShown(giver)
-  frame.tabType.dim, frame.tabGiver.dim = giver, not giver
-  frame.tabType.paint(); frame.tabGiver.paint()
+  frame.tabCrumbs.under:SetShown(crumbs)
+  frame.tabType.dim, frame.tabGiver.dim, frame.tabCrumbs.dim = not plain, not giver, not crumbs
+  frame.tabType.paint(); frame.tabGiver.paint(); frame.tabCrumbs.paint()
 end
 
 local CHIPS = { { "available", "Available" }, { "log", "In log" }, { "missed", "Missed" }, { "done", "Done" }, { "all", "All" } }
@@ -1114,11 +1131,11 @@ local function RenderZone()
   end
   y = 30
 
-  local function statusIcon(row, status, indent)
+  local function statusIcon(row, status, indent, id)
     local dim = status == "missed"
-    local cell = STATUS_CELL[dim and "locked" or status]
+    local cell = StatusCell(dim and "locked" or status, id)
     if cell then
-      row.status:SetTexCoord(cell * 0.25, (cell + 1) * 0.25, 0, 1)
+      SetCell(row.status, cell)
       row.status:ClearAllPoints(); row.status:SetPoint("TOPLEFT", 24 + indent, -5)
       row.status:SetDesaturated(dim)
       row.status:Show()
@@ -1140,9 +1157,13 @@ local function RenderZone()
     elseif s.status == "locked" and #s.detail > 0 then
       sub = "|cffff8a8aNeeds: " .. table.concat(s.detail, " · ") .. "|r"
     end
+    if ZS().crumbs and (not sub or s.greyNote) and Data.IsBreadcrumb(id) then
+      local to = Data.BreadcrumbTarget(id)
+      if to then sub = "|cff8fb4c8Leads into " .. (Data.Name(to) or ("quest " .. to)) .. "|r" end
+    end
     local row = nextRow(sub and 40 or 28)
     row.questId, row.entry, row.onClick = id, entry, ZoneRowClick
-    statusIcon(row, s.status, indent)
+    statusIcon(row, s.status, indent, id)
     row.name:ClearAllPoints(); row.name:SetPoint("TOPLEFT", 46 + indent, -5); row.name:SetWidth(CONTENT_W - 46 - indent - 84)
     row.name:SetText(Crumb(id) .. LevelTag(info.level) .. STATUS_COLOR[s.status] .. entry.name .. "|r  |cff808080#" .. id .. "|r")
     if s.status == "missed" then row.tag:SetText("|cffd9a04aMissed|r"); row.tag:Show() end
@@ -1182,7 +1203,26 @@ local function RenderZone()
   end
 
   local shown = 0
-  if not ZS().byGiver then
+  if ZS().crumbs then
+    -- only the breadcrumb quests (optional lead-ins to a longer quest), by level
+    local list = visible(model.quests)
+    local crumbs = {}
+    for _, id in ipairs(list) do
+      if Data.IsBreadcrumb(id) then crumbs[#crumbs + 1] = id end
+    end
+    table.sort(crumbs, function(a, b)
+      local ia, ib = Zones.InfoOf(a), Zones.InfoOf(b)
+      local la, lb = ia.level or 0, ib.level or 0
+      if la ~= lb then return la < lb end
+      if (ia.name or "") ~= (ib.name or "") then return (ia.name or "") < (ib.name or "") end
+      return a < b
+    end)
+    if #crumbs > 0 then
+      header("Breadcrumbs", #crumbs)
+      for _, id in ipairs(crumbs) do questRow(id, 0) end
+    end
+    shown = #crumbs
+  elseif not ZS().byGiver then
     local chains, singles, groups, objTotal = {}, visible(model.singles), {}, 0
     for _, c in ipairs(model.chains) do
       if Zones.ChainMatches(filter, ev.chain[c]) then chains[#chains + 1] = c end
@@ -1242,7 +1282,7 @@ function Render()
   for _, row in ipairs(rows) do row:Hide(); row.here:Hide(); HideLinks(row); ReleaseIcons(row) end
   if zoneBar then zoneBar:Hide() end
   if zoneMode then return RenderZone() end
-  frame.toggle:Hide() -- the toggle holds the Zones tab's By type | By giver tabs
+  frame.toggle:Hide() -- the toggle holds the Zones tab's By type | By giver | Crumbs tabs
 
   if Data.state == "building" then
     frame.title:SetText("QuestThread")
@@ -1282,8 +1322,7 @@ function Render()
     return
   end
 
-  local raceId, classId = Data.PlayerIds()
-  local chain = Core.Chain(Data.index, current, Data.Info, { race = raceId, class = classId })
+  local chain = Core.Chain(Data.index, current, Data.Info, Data.Who())
   if not chain then
     frame.title:SetText("Quest " .. current)
     frame.sub:SetText("That quest is not in QuestieDB.")
@@ -1372,9 +1411,9 @@ function Render()
         local crow = nextRow(28 + 12 + (cWhere and 12 or 0))
         crow.questId, crow.entry = c.id, c
         crow.num:SetText("»")
-        local cell = STATUS_CELL[c.status]
+        local cell = StatusCell(c.status, c.id)
         if cell then
-          crow.status:SetTexCoord(cell * 0.25, (cell + 1) * 0.25, 0, 1)
+          SetCell(crow.status, cell)
           crow.status:ClearAllPoints(); crow.status:SetPoint("TOPLEFT", 38, -5)
           crow.status:Show()
         end
@@ -1407,9 +1446,9 @@ function Render()
       row.questId = e.id
       row.entry = e
       row.num:SetText(qi == 1 and tostring(li) or "·")
-      local cell = STATUS_CELL[e.status]
+      local cell = StatusCell(e.status, e.id)
       if cell then
-        row.status:SetTexCoord(cell * 0.25, (cell + 1) * 0.25, 0, 1)
+        SetCell(row.status, cell)
         row.status:Show()
       end
       local color = isCurrent and "|cffffd100" or (e.status == "done" and "|cffa8c8ac" or (e.status == "locked" and "|cffb4b4b4" or "|cffffffff"))
@@ -1530,7 +1569,7 @@ local function Create()
   f.back = back
 
   local box = CreateFrame("EditBox", nil, f, "BackdropTemplate")
-  box:SetSize(190, 24)
+  box:SetSize(150, 24)
   box:SetPoint("TOPLEFT", 14, -80)
   box:SetAutoFocus(false)
   box:SetFontObject("ChatFontNormal")
@@ -1641,24 +1680,28 @@ local function Create()
     b.under:SetPoint("BOTTOMLEFT", 6, -2); b.under:SetPoint("BOTTOMRIGHT", -6, -2); b.under:SetHeight(2)
     return b
   end
-  f.tabChain = Tab("Chains", box, 8)
-  f.tabZone = Tab("Zones", f.tabChain, 2)
+  f.tabChain = Tab("Chains", box, 8, nil, 54)
+  f.tabZone = Tab("Zones", f.tabChain, 2, nil, 54)
   f.tabChain:SetScript("OnClick", function() UI.ShowChains() end)
   f.tabZone:SetScript("OnClick", function() UI.ShowZones() end)
 
-  -- By type | By giver: how the Zones tab groups its list (only shown there), at the right.
+  -- By type | By giver | Crumbs: how the Zones tab lists its quests (only shown there), at the right.
   local toggle = CreateFrame("Frame", nil, f)
-  toggle:SetSize(116, 22)
+  toggle:SetSize(168, 22)
   toggle:SetPoint("TOPRIGHT", f, "TOPRIGHT", -16, -81)
   f.toggle = toggle
-  f.tabType = Tab("By type", nil, 0, toggle, 56)
+  f.tabType = Tab("By type", nil, 0, toggle, 50)
   f.tabType:SetPoint("LEFT", toggle, "LEFT", 0, 0)
-  f.tabGiver = Tab("By giver", f.tabType, 4, toggle, 56)
+  f.tabGiver = Tab("By giver", f.tabType, 3, toggle, 54)
+  f.tabCrumbs = Tab("Crumbs", f.tabGiver, 3, toggle, 58)
   f.tabType:SetScript("OnClick", function()
-    if zoneMode then ZS().byGiver = false; Render() end
+    if zoneMode then ZS().byGiver = false; ZS().crumbs = false; Render() end
   end)
   f.tabGiver:SetScript("OnClick", function()
-    if zoneMode then ZS().byGiver = true; Render() end
+    if zoneMode then ZS().byGiver = true; ZS().crumbs = false; Render() end
+  end)
+  f.tabCrumbs:SetScript("OnClick", function()
+    if zoneMode then ZS().crumbs = true; Render() end
   end)
 
   local well = CreateFrame("Frame", nil, f, "BackdropTemplate")
@@ -1905,7 +1948,8 @@ function UI.IsShown()
 end
 
 -- The look-and-feel helpers, for the panel beside the map (MapPanel.lua).
-UI.Widgets = { Button = Button, Boxed = Boxed, Solid = Solid, Text = Text, LevelTag = LevelTag, Crumb = Crumb }
+UI.Widgets = { Button = Button, Boxed = Boxed, Solid = Solid, Text = Text, LevelTag = LevelTag, Crumb = Crumb,
+  StatusCell = StatusCell, SetCell = SetCell }
 
 function UI.Toggle()
   Create()

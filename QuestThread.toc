@@ -2,7 +2,7 @@
 ## Title: QuestThread
 ## Notes: See a quest's whole chain with status, total XP, reputation and item rewards, from QuestieDB. Chain button in the quest log or on the minimap, Ctrl+click a Questie map icon, or /qthread. A Zones tab and a map panel list the quests that start in each zone.
 ## Author: Sokratis
-## Version: 1.1.2
+## Version: 1.2.0
 ## Category: Quests
 ## X-License: MIT
 ## IconTexture: Interface\AddOns\QuestThread\Chain.tga

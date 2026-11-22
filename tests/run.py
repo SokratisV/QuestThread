@@ -9,6 +9,7 @@ stub frames (catches nil errors in this addon's own code, not WoW API semantics)
 """
 import json
 import os
+import struct
 import sys
 
 from lupa.lua51 import LuaRuntime
@@ -600,11 +601,18 @@ G.SlashCmdList["QUESTTHREAD"]("166")
 entry_row = next((f for f in G.stubs.values() if f.questId == 166 and f.entry is not None), None)
 check("a quest row carries its entry and status", entry_row is not None and entry_row.entry.status is not None)
 CELL = {"done": 0, "log": 1, "available": 2, "locked": 3}
+CELLW = 1.0 / 8  # Status.tga: eight 32-px cells, five drawn
 with_entry = [f for f in G.stubs.values() if f.entry is not None and f._shown]
 bad = [(f.entry.status, f.status._tc[1] if f.status._tc is not None else None) for f in with_entry
-       if f.status._tc is None or abs(f.status._tc[1] - CELL[f.entry.status] * 0.25) > 1e-9]
+       if f.status._tc is None or abs(f.status._tc[1] - CELL[f.entry.status] * CELLW) > 1e-9]
 check("each row's status icon is the cell for its status", len(with_entry) >= 8 and not bad, bad[:3])
-check("the sheet cells are a quarter wide", all(abs(f.status._tc[2] - f.status._tc[1] - 0.25) < 1e-9 for f in with_entry))
+check("the sheet cells are an eighth wide", all(abs(f.status._tc[2] - f.status._tc[1] - CELLW) < 1e-9 for f in with_entry))
+sheet = open(os.path.join(ROOT, "Status.tga"), "rb").read()
+sw, sh, sdepth = struct.unpack("<HHB", sheet[12:17])
+check("Status.tga is 256x32, 32-bit, uncompressed, with the fifth cell (green !) drawn and the sixth empty",
+      (sw, sh, sdepth) == (256, 32, 32) and sheet[2] == 2 and len(sheet) == 18 + 256 * 32 * 4
+      and max(sheet[18 + 3 + 4 * (y * 256 + x)] for y in range(32) for x in range(128, 160)) == 255
+      and max(sheet[18 + 3 + 4 * (y * 256 + x)] for y in range(32) for x in range(160, 192)) == 0, (sw, sh, sdepth))
 locked_rows = [f for f in with_entry if f.entry.status == "locked"]
 check("locked rows say what they need on a second line", locked_rows and all(f.sub._text.find("Needs:") >= 0 and f.sub._shown for f in locked_rows), len(locked_rows))
 plain = [f for f in with_entry if f.entry.status != "locked" and f.entry.id != 166]
@@ -875,10 +883,21 @@ check("a normal quest gets no Repeatable tag", "Repeatable" not in other.name._t
 G.tipLines = lua.table()
 r166._scripts["OnEnter"](r166)
 check("the tooltip says it is repeatable", "Repeatable" in list(G.tipLines.values()), list(G.tipLines.values())[:5])
+prev_done = G.C_QuestLog.IsQuestFlaggedCompleted
+G.C_QuestLog.IsQuestFlaggedCompleted = lua.eval("function(id) return id ~= 166 end")  # every step before it is done, so it is available
+G.SlashCmdList["QUESTTHREAD"]("166")
+r166 = chain_row(166)
+check("a repeatable quest never done has the gold available cell", r166.entry.status == "available" and abs(r166.status._tc[1] - 2 * CELLW) < 1e-9, (r166.entry.status, r166.status._tc))
 D.RecordTurnIn(166)
 D.RecordTurnIn(166)
 G.SlashCmdList["QUESTTHREAD"]("166")
 r166 = chain_row(166)
+check("... and once it is done at least once, the green ! cell", r166.entry.status == "available" and abs(r166.status._tc[1] - 4 * CELLW) < 1e-9 and abs(r166.status._tc[2] - 5 * CELLW) < 1e-9, (r166.entry.status, r166.status._tc))
+G.C_QuestLog.IsQuestFlaggedCompleted = prev_done
+G.SlashCmdList["QUESTTHREAD"]("166")
+r166 = chain_row(166)
+other_row = next(f for f in G.stubs.values() if f._shown and f.entry is not None and f.entry.id != 166 and f.entry.status == "available")
+check("a normal available quest keeps the gold cell", abs(other_row.status._tc[1] - 2 * CELLW) < 1e-9, other_row.status._tc)
 check("a repeatable quest done twice says so and its id is green", "Repeatable · done 2x" in r166.name._text and "|cff4fe04f#166" in r166.name._text, r166.name._text)
 G.tipLines = lua.table()
 r166._scripts["OnEnter"](r166)
@@ -890,6 +909,23 @@ r166 = chain_row(166)
 check("done according to Questie's journey only: no count", "Repeatable · done" in r166.name._text and "x" not in r166.name._text.split("done")[1].split("|")[0], r166.name._text)
 G.Questie = None
 G.QuestThreadDB.turnedIn = None
+
+# ---- who you are: the professions you have learned ----
+G.GetProfessions = lua.eval("function() return 1, 2, nil, 4 end")
+G.GetProfessionInfo = lua.eval("function(i) return 'P' .. i, 0, 100, 300, 0, 0, ({[1]=171,[2]=164,[4]=185})[i] end")
+who1 = D.Who()
+check("Who reads the learned professions from GetProfessions (the skill line is its 7th value)", who1.hasSkill(171) is True and who1.hasSkill(185) is True and who1.hasSkill(333) is False)
+G.GetProfessionInfo = lua.eval("function(i) return 'P' .. i, 0, 100, 300, 0, 0, ({[1]=171,[2]=333,[4]=185})[i] end")
+who2 = D.Who()
+check("Who's key changes when the learned professions do", who1.key != who2.key and who2.hasSkill(333) is True and who2.hasSkill(164) is False, (who1.key, who2.key))
+G.GetProfessions = None
+G.GetProfessionInfo = None
+who3 = D.Who()
+check("without GetProfessions nothing is ruled out", who3.hasSkill(171) is None and who3.hasSkill(333) is None)
+G.C_SkillInfo = lua.eval("{ GetSkillLineInfoByID = function(id) if id == 171 then return { rank = 50 } end return { rank = 0 } end }")
+who4 = D.Who()
+check("a skill line with rank counts as learned even then, and the rest stays unknown", who4.hasSkill(171) is True and who4.hasSkill(333) is None)
+G.C_SkillInfo = None
 
 # ---- where a quest's objectives happen ----
 def lookups():
@@ -1060,6 +1096,35 @@ check("a chain entry carries its lead-in quests, sorted, with their details",
 check("the lead-ins are not part of the chain's steps or count", cc.quests == 1 and cc.parts == 1)
 check("opened from a lead-in itself, the chain contains it and does not repeat it", Core.Chain(cidx, 11, cinfo).quests == 2
       and all(len(list(e.crumbs.values())) == 1 and list(e.crumbs.values())[0].id == 12 for e in Core.Chain(cidx, 11, cinfo).layers[2].values()))
+# WoW Forever's Skyborne races: ids 95 / 96 sit at mask bits 32 / 33, not at bit id - 1
+sky = 77 + 2 ** 32  # the four Alliance races of the old world plus Skyborne Alliance
+check("Skyborne Alliance (95) can take a quest whose mask has bit 32, Skyborne Horde (96) cannot",
+      Core.Eligible(sky, 0, 95, 1) is True and Core.Eligible(sky, 0, 96, 1) is False)
+check("... and the ordinary races still follow the mask", Core.Eligible(sky, 0, 1, 1) is True and Core.Eligible(sky, 0, 2, 1) is False and Core.Eligible(2 ** 21, 0, 22, 1) is True and Core.Eligible(2 ** 21, 0, 1, 1) is False)
+check("a race the addon does not know is never filtered out by race", Core.Eligible(77, 0, 500, 1) is True and Core.Eligible(77, 0, None, 1) is True and Core.Eligible(0, 0, 95, 1) is True)
+check("the Horde Skyborne is not Alliance-only's", Core.Eligible(2 ** 33, 0, 96, 1) is True and Core.Eligible(2 ** 33, 0, 95, 1) is False)
+mk_who = lua.eval("function(set, decisive) return { race = 1, class = 1, hasSkill = function(id) if set[id] then return true end if decisive then return false end return nil end } end")
+alch = lua.table_from({171: True})
+def allowed(info, set_=None, decisive=True):
+    return Core.Allowed(lua.table_from(info), mk_who(lua.table_from(set_ or {}), decisive))
+skill171 = {"skill": lua.table_from([171, 150])}
+check("a profession quest is for you only with the profession learned", allowed(skill171, {171: True}) is True and allowed(skill171, {}) is False)
+check("... and when the client cannot say which you have, it stays", allowed(skill171, {}, False) is True)
+check("a skill that is not a profession (riding) never hides a quest", allowed({"skill": lua.table_from([762, 75])}, {}) is True)
+rk = {"ranks": lua.table_from([lua.table_from([171, 1]), lua.table_from([164, 1])])}
+check("with several professions listed, one of them is enough", allowed(rk, {164: True}) is True and allowed(rk, {171: True}) is True and allowed(rk, {}) is False)
+check("no who: everyone", Core.Allowed(lua.table_from(skill171), None) is True)
+check("race and profession both have to fit", allowed({"raceMask": 2, "skill": lua.table_from([171, 1])}, {171: True}) is False)
+pidx = Core.NewIndex()
+Core.AddQuest(pidx, 30, lua.table_from({}))
+Core.AddQuest(pidx, 31, lua.table_from({"pre": lua.table_from([30])}))
+Core.AddQuest(pidx, 32, lua.table_from({"pre": lua.table_from([31])}))
+pinfo = lua.eval("function(id) return {name='Q'..id, level=id, skill = id == 31 and {171, 100} or nil} end")
+def psteps(start, have):
+    ch = Core.Chain(pidx, start, pinfo, mk_who(lua.table_from(have), True))
+    return sorted(e.id for layer in ch.layers.values() for e in layer.values())
+check("a chain step that needs a profession you lack is left out", psteps(30, {}) == [30, 32] and psteps(30, {171: True}) == [30, 31, 32], (psteps(30, {}), psteps(30, {171: True})))
+check("... but the quest you opened stays", 31 in psteps(31, {}))
 # faction: 11 is Horde-only (mask 178 = Orc/Undead/Tauren/Troll), 12 is Alliance-only (mask 77 = Human/Dwarf/NightElf/Gnome)
 fact = lua.eval("function(id) local r = ({[11]=178,[12]=77})[id]; return {name='Q'..id, level=id, raceMask=r} end")
 def crumb_ids(race, cls=1):
@@ -1381,6 +1446,30 @@ G.QuestDB.requiredRaces = lua.eval("function(id) if id == 2 then return 178 end 
 Z.Reset()
 m12 = Z.Model(12)
 check("a quest for another faction is left out of the zone", 2 not in m12.quests.values() and len(m12.quests) == len(all_ids) - 1, len(m12.quests))
+# a Skyborne character (race id 95 Alliance / 96 Horde): QuestieDB's mask has them at bits 32 / 33
+G.UnitRace = lua.eval("function() return 'Skyborne', 'Skyborne', 95 end")
+G.QuestDB.requiredRaces = lua.eval("function(id) if id == 2 then return 4294967373 end end")  # Alliance races + Skyborne Alliance
+Z.Reset()
+check("a Skyborne Alliance character gets the quests QuestieDB lists for their side", 2 in Z.Model(12).quests.values() and len(Z.Model(12).quests) == len(all_ids))
+G.UnitRace = lua.eval("function() return 'Skyborne', 'Skyborne', 96 end")
+Z.Reset()
+check("... and a Skyborne Horde character does not", 2 not in Z.Model(12).quests.values())
+G.QuestDB.requiredRaces = None
+# a profession quest is only listed when you have the profession
+pq = [i for i in all_ids if i != 2][0]
+G.QuestDB.requiredSkill = lua.eval("function(id) if id == %d then return { 171, 150 } end end" % pq)
+G.GetProfessions = lua.eval("function() end")
+G.GetProfessionInfo = lua.eval("function() end")
+Z.Reset()
+check("a profession quest is left out of a zone for someone without the profession", pq not in Z.Model(12).quests.values() and len(Z.Model(12).quests) == len(all_ids) - 1, len(Z.Model(12).quests))
+G.GetProfessions = lua.eval("function() return 1 end")
+G.GetProfessionInfo = lua.eval("function(i) return 'Alchemy', 0, 1, 300, 0, 0, 171 end")
+check("... and appears as soon as they learn it, with no reset", pq in Z.Model(12).quests.values() and len(Z.Model(12).quests) == len(all_ids))
+G.GetProfessions = None
+G.GetProfessionInfo = None
+Z.Reset()
+check("when the client cannot list professions the quest stays", pq in Z.Model(12).quests.values())
+G.QuestDB.requiredSkill = None
 G.UnitRace = None
 G.QuestDB.requiredRaces = None
 Z.Reset()
@@ -1650,6 +1739,23 @@ check("clicking the lit By giver again keeps it", any(r.entry is None and "Test 
 mainwin.tabType._scripts["OnClick"](mainwin.tabType)
 check("By type goes back to grouping by type and lights up again", mainwin.tabType.under._shown and not mainwin.tabGiver.under._shown)
 check("the tab goes back to grouping by type", any("Chains" in r.name._text for r in zone_rows() if r.entry is None))
+# the Crumbs tab: only the breadcrumb quests
+cs = chips()
+cs[0]._scripts["OnClick"](cs[0])
+mainwin.tabCrumbs._scripts["OnClick"](mainwin.tabCrumbs)
+crow_all = zone_rows()
+crow_q = [r for r in crow_all if r.entry is not None]
+crow_h = [r.name._text for r in crow_all if r.entry is None]
+check("the Crumbs tab is lit and the other two are not", mainwin.tabCrumbs.under._shown and not mainwin.tabType.under._shown and not mainwin.tabGiver.under._shown)
+check("Crumbs lists only breadcrumb quests, under one Breadcrumbs header",
+      len(crow_q) > 0 and all(ns2.Data.IsBreadcrumb(r.questId) for r in crow_q) and len(crow_h) == 1 and "Breadcrumbs" in crow_h[0], (len(crow_q), crow_h))
+check("... including Raven Hill (#163), which the By type list has as a single quest", any(r.questId == 163 for r in crow_q))
+check("a breadcrumb row says what it leads into", any("Leads into" in r.sub._text for r in crow_q), [r.sub._text for r in crow_q][:3])
+mainwin.tabGiver._scripts["OnClick"](mainwin.tabGiver)
+check("By giver leaves Crumbs and lights up itself", mainwin.tabGiver.under._shown and not mainwin.tabCrumbs.under._shown and not G.QuestThreadDB.zone.crumbs and mainwin.tabGiver.under._shown)
+mainwin.tabCrumbs._scripts["OnClick"](mainwin.tabCrumbs)
+mainwin.tabType._scripts["OnClick"](mainwin.tabType)
+check("By type leaves Crumbs and lists chains again", mainwin.tabType.under._shown and not mainwin.tabCrumbs.under._shown and any("Chains" in r.name._text for r in zone_rows() if r.entry is None))
 # filters, missed quests
 G.UnitLevel = lua.eval("function() return 60 end")
 cs = chips()

@@ -75,8 +75,9 @@ end
 -- The quest's chain: every quest connected to it through prerequisites and follow-ups
 -- (breadcrumbs excluded), grouped into steps. Quests in the same step are alternatives or
 -- parallel branches. info(id) -> { name, xpLevel, xpBase, rep } supplies per-quest details.
--- who (optional) = { race = raceId, class = classId }: a step or lead-in quest meant for another race or class is
--- left out (the two factions often have their own version of a step), using info's raceMask / classMask. The quest
+-- who (optional) = { race = raceId, class = classId, hasSkill = fn }: a step or lead-in quest that Core.Allowed says is
+-- not for you (another race or class, a profession you lack) is left out, using info's raceMask / classMask / skill
+-- / ranks (the two factions often have their own version of a step). The quest
 -- you start from always stays, and the others are still walked through, so a chain the other faction's step
 -- connects is not cut in two.
 function Core.Chain(idx, startId, info, who)
@@ -107,8 +108,7 @@ function Core.Chain(idx, startId, info, who)
   if who then
     for id in pairs(seen) do
       if id ~= startId then
-        local i = info(id) or {}
-        if not Core.Eligible(i.raceMask, i.classMask, who.race, who.class) then seen[id] = nil end
+        if not Core.Allowed(info(id) or {}, who) then seen[id] = nil end
       end
     end
   end
@@ -172,7 +172,7 @@ function Core.Chain(idx, startId, info, who)
     local own = {}
     for _, b in ipairs(idx.bcs[id] or {}) do
       local bi = who and info(b) or nil
-      local mine = not bi or Core.Eligible(bi.raceMask, bi.classMask, who.race, who.class)
+      local mine = not bi or Core.Allowed(bi, who)
       if known[b] and not seen[b] and mine then own[#own + 1] = b end
     end
     table.sort(own)
@@ -268,15 +268,61 @@ function Core.Difficulty(qLevel, level, greenRange)
   return "grey"
 end
 
--- QuestieDB's race and class masks: bit (id - 1) is set for each race or class that can take the quest
--- (races: Human 1, Orc 2, Dwarf 3 ...; classes: Warrior 1, Paladin 2, Hunter 3 ...). nil or 0 means anyone.
+-- QuestieDB's race and class masks (nil or 0 means anyone). A class has bit (id - 1) set (Warrior 1, Paladin 2 ...).
+-- A race does too for the ordinary ids (Human 1, Orc 2, Dwarf 3 ... Worgen 22, Pandaren 24-26), but WoW Forever's two
+-- Skyborne races have ids 95 and 96 and sit at bits 32 and 33 (QuestieDB's Enum.raceMaskById; Data copies it in).
+Core.raceMaskById = { [95] = 2 ^ 32, [96] = 2 ^ 33 }
+
+-- The mask bit of a race id, or nil for a race this does not know (such a character is never filtered by race).
+function Core.RaceBit(raceId)
+  if type(raceId) ~= "number" then return nil end
+  local bit = Core.raceMaskById[raceId]
+  if bit then return bit end
+  if raceId >= 1 and raceId <= 32 then return 2 ^ (raceId - 1) end
+  return nil
+end
+
 local function maskHas(mask, id)
   return floor(mask / 2 ^ (id - 1)) % 2 == 1
 end
 
 function Core.Eligible(raceMask, classMask, raceId, classId)
-  if type(raceMask) == "number" and raceMask > 0 and raceId and not maskHas(raceMask, raceId) then return false end
+  local bit = Core.RaceBit(raceId)
+  if type(raceMask) == "number" and raceMask > 0 and bit and floor(raceMask / bit) % 2 ~= 1 then return false end
   if type(classMask) == "number" and classMask > 0 and classId and not maskHas(classMask, classId) then return false end
+  return true
+end
+
+-- Skill line ids of the professions (QuestieDB's requiredSkill / requiredRanks use them). Riding is not one.
+Core.PROFESSIONS = {
+  [129] = true, [164] = true, [165] = true, [171] = true, [182] = true, [185] = true, [186] = true, [197] = true,
+  [202] = true, [333] = true, [356] = true, [393] = true, [755] = true, [773] = true, [794] = true,
+}
+
+-- Can this character take the quest at all? info = { raceMask, classMask, skill = { skillId, value }, ranks = { { skillId,
+-- rank }, ... } }; who = { race, class, hasSkill(skillId) -> true | false | nil (unknown) } (nil: everyone).
+-- A quest for another race or class, or one that needs a profession you have not learned, is not for you.
+-- Only whether you have the profession counts, not your skill in it.
+function Core.Allowed(i, who)
+  if not who then return true end
+  if not Core.Eligible(i.raceMask, i.classMask, who.race, who.class) then return false end
+  local has = who.hasSkill
+  if has then
+    local s = i.skill
+    if type(s) == "table" and Core.PROFESSIONS[s[1]] and has(s[1]) == false then return false end
+    local r = i.ranks
+    if type(r) == "table" then
+      local any, learned = false, false
+      for _, p in ipairs(r) do
+        local id = type(p) == "table" and p[1] or nil
+        if id and Core.PROFESSIONS[id] then
+          any = true
+          if has(id) ~= false then learned = true end
+        end
+      end
+      if any and not learned then return false end
+    end
+  end
   return true
 end
 

@@ -55,8 +55,8 @@ While the window is open it follows whichever quest you open in the quest log. E
   objective goes to its quest giver. **Shift+right-click** goes to where the quest is handed in and
   **Alt+right-click** to where it starts. Uses TomTom if you have it, otherwise the game's own waypoint.
 - A **repeatable** quest is tagged "Repeatable" after its ID. Once you have completed it at least once the ID turns
-  green and the tag reads "Repeatable · done" (with "2x" and so on for the turn-ins QuestThread has seen). The
-  gold "!" stays, since it can be taken again.
+  green and the tag reads "Repeatable · done" (with "2x" and so on for the turn-ins QuestThread has seen). Its
+  status icon turns from the gold "!" to a **green "!"**: you have done it, and it can be taken again.
 - Every quest shows its **ID** (grey, after the name). **Hover a quest and press Ctrl+C** (in the chain or in a
   list of results) and a small box appears with its **Wowhead link** already selected; the copy closes it, and so
   does Escape. This works like Wowhead Quick Link and is only listening while the mouse is on a quest and you are
@@ -85,11 +85,14 @@ name) or with `/qthread zone <name>`; with no name it shows the zone you are sta
   step of its chain ("Skipped"), a quest it excludes is done or in your log, or you are over its level cap.
 - A quest you have **outleveled** (grey to you in the game) is still **Available**, since you can take it, and
   so is part of **All**; its row says "Outleveled: quest level 35, you are 47" in grey and carries a "Grey" tag. It
-  is never counted as missed. Quests meant for another race, class or faction are left out of the list, and out of a chain's steps.
+  is never counted as missed. Quests meant for another race, class or faction, and **profession quests for a profession you have not learned**
+  (only whether you have the profession counts, not your skill in it), are left out of the list, and out of a
+  chain's steps. WoW Forever's Skyborne races are recognised.
 - **By type** (the default) shows chains (one row each, with its steps, level range and how much is done),
   then single quests, then **the objects and items that start quests** (a poster, a dropped note) with the quest
   each one starts. **By giver** (the second tab at the right, lit when active like Chains and Zones) shows one fold-out header per NPC, object or item,
-  with the quests it gives.
+  with the quests it gives. **Crumbs** (the third) lists only the **breadcrumb quests** (the optional lead-ins to a
+  longer quest) of the zone, by level, each saying what it leads into; the filter chips apply to it too.
 - Click a row for the objectives popup; its **Chain** button opens the chain. Right-click is the waypoint, as
   everywhere.
 - **Map panel:** the QuestThread button on the world map (Shift-drag to move it) or `/qthread map` opens the same
@@ -120,8 +123,9 @@ you), orange (3-4 above), yellow (within 2), green (still worth XP) and grey (tr
 - QuestieDB has no money rewards, item counts, or which rewards are choose-one; the window lists reward
   items without that distinction (so there is no "best reward for your class"). Only about 2,000 of 5,900
   quests have item links in QuestieDB.
-- "Locked" is worked out from the level and prerequisite quests QuestieDB lists; race, class, profession and
-  reputation requirements are not checked.
+- "Locked" is worked out from the level and prerequisite quests QuestieDB lists; reputation and profession *skill*
+  requirements are not checked (a quest for a race, class or profession you do not have is left out of the lists
+  instead).
 - Waypoints depend on QuestieDB's spawn and zone tables; a few givers have no known location.
 - Chains are capped at 80 quests (the nearest ones are shown when a chain is larger).
 - No script is added to any Blizzard frame, and no StaticPopup is used.

@@ -1,9 +1,11 @@
-"""Draws Status.tga: the four step-status icons side by side, 128x32 (four 32x32 cells), 32-bit TGA.
+"""Draws Status.tga: the step-status icons side by side, 256x32 (eight 32x32 cells, five drawn), 32-bit TGA.
 
   cell 0  done        green disc, check mark
   cell 1  in log      blue disc, question mark
   cell 2  available   gold disc, exclamation mark
   cell 3  locked      red disc, padlock
+  cell 4  again       green disc, exclamation mark (a repeatable quest you have already completed once)
+  cells 5-7 are empty (the sheet is a power of two wide)
 
   python -I tools/make-status-icons.py              writes Status.tga next to the addon's TOC
   python -I tools/make-status-icons.py preview.png  also writes a 4x PNG preview
@@ -16,7 +18,7 @@ import sys
 import zlib
 from pathlib import Path
 
-CELL, CELLS, SS = 32, 4, 4
+CELL, CELLS, SS = 32, 8, 4
 W, H = CELL * CELLS, CELL
 CX = CY = 16.0
 R = 14.6
@@ -27,7 +29,9 @@ STYLES = [
     ((40, 92, 150), (16, 40, 72), (196, 222, 255)),     # in log
     ((178, 140, 20), (82, 62, 6), (255, 240, 170)),     # available
     ((150, 52, 52), (66, 22, 22), (255, 206, 206)),     # locked
+    ((47, 128, 66), (20, 58, 30), (222, 250, 228)),     # again
 ]
+GLYPHS = [0, 1, 2, 3, 2]  # the glyph drawn in each cell: check, ?, !, lock, !
 
 
 def seg_d(px, py, a, b):
@@ -69,6 +73,8 @@ def glyph(kind, px, py):
 
 def sample(x, y):
     cell = int(x // CELL)
+    if cell >= len(STYLES):
+        return None
     px, py = x - cell * CELL, y
     d = math.hypot(px - CX, py - CY)
     fill, edge, ink = STYLES[cell]
@@ -76,7 +82,7 @@ def sample(x, y):
         return None
     if d > R - 0.2:
         return edge
-    if glyph(cell, px, py):
+    if glyph(GLYPHS[cell], px, py):
         return ink
     return fill
 
