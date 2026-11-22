@@ -138,11 +138,7 @@ local function giverName(kind, id)
   return Data.ItemName(id)
 end
 
-local function playerIds()
-  local race = UnitRace and select(3, UnitRace("player")) or nil
-  local class = UnitClass and select(3, UnitClass("player")) or nil
-  return race, class
-end
+local playerIds = Data.PlayerIds
 
 local function byLevelThenName(a, b)
   local ia, ib = infoOf(a), infoOf(b)
@@ -270,7 +266,7 @@ function Zones.Model(area)
   local seen, chains, singles, others, chainOf = {}, {}, {}, {}, {}
   for _, q in ipairs(hereList) do
     if not seen[q] then
-      local chain = (not idx.breadcrumb[q]) and Core.Chain(idx, q, infoOf) or nil
+      local chain = (not idx.breadcrumb[q]) and Core.Chain(idx, q, infoOf, { race = raceId, class = classId }) or nil
       if chain and chain.quests >= 2 then
         local c = { ids = {}, here = {}, parts = chain.parts, truncated = chain.truncated }
         for _, layer in ipairs(chain.layers) do

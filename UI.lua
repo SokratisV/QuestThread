@@ -235,7 +235,7 @@ local function ShowQuestTip(row)
       GameTooltip:AddLine(Crumb(row.questId) .. (Data.Name(row.questId) or ("Quest " .. row.questId)), 1, 0.82, 0)
       if Data.IsBreadcrumb(row.questId) then GameTooltip:AddLine("Breadcrumb quest (optional)", 0.88, 0.65, 0.29) end
       GameTooltip:AddLine("Quest #" .. row.questId, 0.8, 0.8, 0.8)
-      GameTooltip:AddLine("Ctrl+C: copy the Wowhead link", 0.6, 0.6, 0.6)
+      if IsShiftKeyDown and IsShiftKeyDown() then GameTooltip:AddLine("Ctrl+C: copy the Wowhead link", 0.6, 0.6, 0.6) end
       GameTooltip:Show()
     end
     return
@@ -249,7 +249,7 @@ local function ShowQuestTip(row)
     GameTooltip:AddLine("Breadcrumb quest (optional)", 0.88, 0.65, 0.29)
   end
   local lv = e.level and e.level > 0 and ("Level " .. e.level) or nil
-  if e.reqLevel and e.reqLevel > 0 then lv = (lv and (lv .. " · ") or "") .. "requires level " .. e.reqLevel end
+  if e.reqLevel and e.reqLevel > 0 then lv = (lv and (lv .. " - ") or "") .. "requires level " .. e.reqLevel end
   if lv then
     local key = DifficultyKey(e.level)
     local c = key and Core.DIFFICULTY[key]
@@ -291,10 +291,15 @@ local function ShowQuestTip(row)
       GameTooltip:AddLine((which == "start" and "Starts: " or "Ends: ") .. g.name .. (place and (" — " .. Data.PlaceText(place)) or ""), 0.9, 0.9, 0.6, true)
     end
   end
-  GameTooltip:AddLine(" ")
-  GameTooltip:AddLine("Left-click: open this quest's chain · Ctrl+C: copy the Wowhead link", 0.6, 0.6, 0.6, true)
-  GameTooltip:AddLine("Right-click: waypoint to where the objectives are", 0.6, 0.6, 0.6, true)
-  GameTooltip:AddLine("Shift+Right-click: to where it is handed in · Alt+Right-click: to where it starts", 0.6, 0.6, 0.6, true)
+  -- The shortcuts show only while Shift is held (the hover watcher below redraws the tip when Shift goes down or up).
+  if IsShiftKeyDown and IsShiftKeyDown() then
+    GameTooltip:AddLine(" ")
+    GameTooltip:AddLine("Left-click: open this quest's chain", 0.6, 0.6, 0.6, true)
+    GameTooltip:AddLine("Ctrl+C: copy the Wowhead link", 0.6, 0.6, 0.6, true)
+    GameTooltip:AddLine("Right-click: waypoint to where the objectives are", 0.6, 0.6, 0.6, true)
+    GameTooltip:AddLine("Shift+Right-click: to where it is handed in", 0.6, 0.6, 0.6, true)
+    GameTooltip:AddLine("Alt+Right-click: to where it starts", 0.6, 0.6, 0.6, true)
+  end
   GameTooltip:Show()
 end
 
@@ -433,6 +438,18 @@ local function Unhover(row)
   if hoverRow == row then hoverRow = nil; ListenForKeys(false) end
 end
 
+-- Pressing or letting go of Shift while the mouse rests on a quest redraws its tooltip (the shortcut lines are
+-- Shift-only). It leaves alone a tooltip that is not the row's own (a link's, or "You are here").
+local modWatch = CreateFrame("Frame")
+modWatch:RegisterEvent("MODIFIER_STATE_CHANGED")
+modWatch:SetScript("OnEvent", function(_, _, key)
+  if key ~= "LSHIFT" and key ~= "RSHIFT" then return end
+  local row = hoverRow
+  if not (row and row.questId and row:IsShown() and GameTooltip:GetOwner() == row) then return end
+  if row.here and row.here:IsShown() and row.here:IsMouseOver() then return end
+  ShowQuestTip(row)
+end)
+
 -- ---- clickable places: a dungeon opens the Dungeon Journal, a zone opens the map on that area ----
 -- The "where" line of a quest as segments, or nil when nothing is known. A segment is
 -- { text, color, sep (shown after it), link = { kind = "dungeon", id, name } | { kind = "zone", area } }.
@@ -474,7 +491,7 @@ end
 
 local function HintFor(link)
   if link.kind == "dungeon" then return "Click: open this quest in the Dungeon Journal (" .. link.name .. ")" end
-  return "Click: open the map on " .. Data.ZoneName(link.area) .. " · Ctrl+click: the quests that start there"
+  return "Click: open the map on " .. Data.ZoneName(link.area) .. " - Ctrl+click: the quests that start there"
 end
 
 local function Activate(link)
@@ -1259,7 +1276,8 @@ function Render()
     return
   end
 
-  local chain = Core.Chain(Data.index, current, Data.Info)
+  local raceId, classId = Data.PlayerIds()
+  local chain = Core.Chain(Data.index, current, Data.Info, { race = raceId, class = classId })
   if not chain then
     frame.title:SetText("Quest " .. current)
     frame.sub:SetText("That quest is not in QuestieDB.")

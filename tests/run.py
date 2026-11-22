@@ -668,7 +668,44 @@ check("every chain row shows its quest id next to the name", len(id_rows) >= 8 a
 hrow = next(f for f in id_rows if f.entry.id == 166)
 G.tipLines = lua.table()
 hrow._scripts["OnEnter"](hrow)
-check("the tooltip mentions the Ctrl+C shortcut", any("Ctrl+C" in s for s in G.tipLines.values()), list(G.tipLines.values())[-2:])
+check("the tooltip has no shortcut lines until Shift is held", not any(w in s for s in G.tipLines.values() for w in ("Ctrl+C", "Left-click", "Right-click")), list(G.tipLines.values())[-3:])
+G.testShift = True
+G.tipLines = lua.table()
+hrow._scripts["OnEnter"](hrow)
+check("... held Shift adds the shortcuts", any("Ctrl+C" in s for s in G.tipLines.values()) and any("Shift+Right-click" in s for s in G.tipLines.values()), list(G.tipLines.values())[-3:])
+check("no tooltip line uses the middle dot, which the tooltip font draws as a square", not any("·" in s for s in G.tipLines.values()), list(G.tipLines.values()))
+old_req = G.QuestDB.requiredLevel
+G.QuestDB.requiredLevel = lua.eval("function(id) return 40 end")
+G.SlashCmdList["QUESTTHREAD"]("166")
+hrow2 = next(f for f in G.stubs.values() if f._shown and f.entry is not None and f.entry.id == 166)
+G.tipLines = lua.table()
+hrow2._scripts["OnEnter"](hrow2)
+lvline = [s for s in G.tipLines.values() if "requires level" in s]
+check("the level line joins the level and the requirement with a plain dash (not a middle dot)", lvline == ["Level 30 - requires level 40"], lvline)
+G.QuestDB.requiredLevel = old_req
+G.SlashCmdList["QUESTTHREAD"]("166")
+hrow = next(f for f in G.stubs.values() if f._shown and f.entry is not None and f.entry.id == 166)
+G.testShift = False
+G.ownerRow = None
+G.GameTooltip.GetOwner = lua.eval("function() return ownerRow end")
+watch = next(f for f in G.stubs.values() if f._events is not None and f._events["MODIFIER_STATE_CHANGED"])
+G.tipLines = lua.table()
+watch._scripts["OnEvent"](watch, "MODIFIER_STATE_CHANGED", "LSHIFT", 1)
+check("pressing Shift redraws nothing when the tooltip is not the quest's", len(G.tipLines) == 0)
+hrow._scripts["OnEnter"](hrow)
+G.ownerRow = hrow
+G.testShift = True
+G.tipLines = lua.table()
+watch._scripts["OnEvent"](watch, "MODIFIER_STATE_CHANGED", "LSHIFT", 1)
+check("pressing Shift over a quest redraws its tooltip with the shortcuts", any("Shift+Right-click" in s for s in G.tipLines.values()), list(G.tipLines.values()))
+G.testShift = False
+G.tipLines = lua.table()
+watch._scripts["OnEvent"](watch, "MODIFIER_STATE_CHANGED", "LSHIFT", 0)
+check("letting go redraws it without them", len(G.tipLines) >= 1 and not any("Right-click" in s for s in G.tipLines.values()), list(G.tipLines.values()))
+G.tipLines = lua.table()
+watch._scripts["OnEvent"](watch, "MODIFIER_STATE_CHANGED", "LCTRL", 1)
+check("other modifier keys do not redraw it", len(G.tipLines) == 0)
+G.GameTooltip.GetOwner = None
 keys = frame_named("QuestThreadKeys")
 check("hovering a quest turns the key listener on", keys is not None and keys._kb is True)
 check("the window itself still takes no keyboard input", kwin._kb is not True)
@@ -725,7 +762,12 @@ G.SlashCmdList["QUESTTHREAD"]("defias")
 hits = [f for f in G.stubs.values() if f._shown and f.questId and f.entry is None and "#" in (f.name._text or "")]
 G.tipLines = lua.table()
 hits[0]._scripts["OnEnter"](hits[0])
-check("a pick-list row has a tooltip with its id and the shortcut", any("Quest #%d" % hits[0].questId in s for s in G.tipLines.values()) and any("Ctrl+C" in s for s in G.tipLines.values()), list(G.tipLines.values()))
+check("a pick-list row has a tooltip with its id, and the shortcut only with Shift", any("Quest #%d" % hits[0].questId in s for s in G.tipLines.values()) and not any("Ctrl+C" in s for s in G.tipLines.values()), list(G.tipLines.values()))
+G.testShift = True
+G.tipLines = lua.table()
+hits[0]._scripts["OnEnter"](hits[0])
+check("... Shift adds it", any("Ctrl+C" in s for s in G.tipLines.values()), list(G.tipLines.values()))
+G.testShift = False
 G.testCtrl = True
 keys._scripts["OnKeyDown"](keys, "C")
 G.testCtrl = False
@@ -1018,6 +1060,29 @@ check("a chain entry carries its lead-in quests, sorted, with their details",
 check("the lead-ins are not part of the chain's steps or count", cc.quests == 1 and cc.parts == 1)
 check("opened from a lead-in itself, the chain contains it and does not repeat it", Core.Chain(cidx, 11, cinfo).quests == 2
       and all(len(list(e.crumbs.values())) == 1 and list(e.crumbs.values())[0].id == 12 for e in Core.Chain(cidx, 11, cinfo).layers[2].values()))
+# faction: 11 is Horde-only (mask 178 = Orc/Undead/Tauren/Troll), 12 is Alliance-only (mask 77 = Human/Dwarf/NightElf/Gnome)
+fact = lua.eval("function(id) local r = ({[11]=178,[12]=77})[id]; return {name='Q'..id, level=id, raceMask=r} end")
+def crumb_ids(race, cls=1):
+    ch = Core.Chain(cidx, 10, fact, lua.table_from({"race": race, "class": cls}) if race else None)
+    e = list(ch.layers[1].values())[0]
+    return [c.id for c in e.crumbs.values()], [b.id for b in ch.breadcrumbs.values()]
+check("an Alliance character sees only the Alliance lead-in", crumb_ids(1) == ([12], [12]), crumb_ids(1))
+check("a Horde character sees only the Horde lead-in", crumb_ids(2) == ([11], [11]), crumb_ids(2))
+# a chain with a faction step: 20 -> 21 (Horde) / 22 (Alliance) -> 23
+fidx = Core.NewIndex()
+Core.AddQuest(fidx, 20, lua.table_from({}))
+Core.AddQuest(fidx, 21, lua.table_from({"pre": lua.table_from([20])}))
+Core.AddQuest(fidx, 22, lua.table_from({"pre": lua.table_from([20])}))
+Core.AddQuest(fidx, 23, lua.table_from({"preS": lua.table_from([21, 22])}))
+finfo = lua.eval("function(id) local r = ({[21]=178,[22]=77})[id]; return {name='Q'..id, level=id, raceMask=r} end")
+def step_ids(start, race):
+    ch = Core.Chain(fidx, start, finfo, lua.table_from({"race": race, "class": 1}) if race else None)
+    return sorted(e.id for layer in ch.layers.values() for e in layer.values()), ch.quests
+check("an Alliance character's chain leaves out the Horde step but keeps the rest", step_ids(20, 1) == ([20, 22, 23], 3), step_ids(20, 1))
+check("a Horde character's chain leaves out the Alliance step", step_ids(20, 2) == ([20, 21, 23], 3), step_ids(20, 2))
+check("with no race known the chain has every step", step_ids(20, None) == ([20, 21, 22, 23], 4), step_ids(20, None))
+check("the quest you opened stays even when it is for the other faction", step_ids(21, 1) == ([20, 21, 22, 23], 4), step_ids(21, 1))
+check("with no race known both show", crumb_ids(None) == ([11, 12], [11, 12]), crumb_ids(None))
 check("an entry with no lead-in has an empty list", len(list(Core.Chain(cidx, 11, cinfo).layers[1][1].crumbs.values())) == 0)
 real5 = Core.Chain(idx, 5, lua_info)
 e5 = next(e for layer in real5.layers.values() for e in layer.values() if e.id == 5)
@@ -1026,6 +1091,18 @@ check("real data: Jitters' Growling Gut (#5) has Raven Hill (#163) as its lead-i
 G.SlashCmdList["QUESTTHREAD"]("5")
 crows = [f for f in G.stubs.values() if f._shown and f.questId == 163 and f.entry is not None]
 check("the lead-in shows as a row in the chain window", len(crows) == 1, len(crows))
+# ... but not for the other faction: Raven Hill made Alliance-only, then a Horde character opens the chain
+G.QuestDB.requiredRaces = lua.eval("function(id) if id == 163 then return 77 end end")
+G.UnitRace = lua.eval("function() return 'Orc', 'Orc', 2 end")
+G.SlashCmdList["QUESTTHREAD"]("5")
+check("a lead-in meant for the other faction is not drawn in the chain window",
+      not [f for f in G.stubs.values() if f._shown and f.questId == 163 and f.entry is not None])
+G.UnitRace = lua.eval("function() return 'Human', 'Human', 1 end")
+G.SlashCmdList["QUESTTHREAD"]("5")
+check("... and is drawn for your own faction", len([f for f in G.stubs.values() if f._shown and f.questId == 163 and f.entry is not None]) == 1)
+G.QuestDB.requiredRaces = None
+G.UnitRace = None
+G.SlashCmdList["QUESTTHREAD"]("5")
 crow = crows[0] if crows else None
 row5 = next((f for f in G.stubs.values() if f._shown and f.questId == 5 and f.entry is not None and f.entry.leadsTo is None), None)
 row93 = next((f for f in G.stubs.values() if f._shown and f.questId == 93 and f.entry is not None), None)
@@ -1445,10 +1522,40 @@ G.tipLines = lua.table()
 dl[0]._scripts["OnEnter"](dl[0])
 check("the dungeon link's tooltip names the dungeon", any("Dungeon Journal (Alpha Keep)" in t for t in G.tipLines.values()), list(G.tipLines.values()))
 dl[0]._scripts["OnLeave"](dl[0])
+# the journal's window has to be shown first (OpenQuestPage alone only picks the page)
+G.journalShown = False
+G.ForeverDungeonJournalFrame = lua.eval("{ IsShown = function() return journalShown end, Show = function() journalShown = true end }")
+G.journalCall = None
+dl[0]._scripts["OnClick"](dl[0])
+check("the journal window is shown when it was closed", G.journalShown is True and G.journalCall is not None and G.journalCall[1] == "Alpha Keep", (G.journalShown, G.journalCall))
+G.ForeverDungeonJournal_NS.ToggleJournal = lua.eval("function() journalToggled = (journalToggled or 0) + 1; journalShown = not journalShown end")
+G.journalShown = False
+dl[0]._scripts["OnClick"](dl[0])
+check("it uses the journal's own toggle when there is one, once", G.journalToggled == 1 and G.journalShown is True, (G.journalToggled, G.journalShown))
+dl[0]._scripts["OnClick"](dl[0])
+check("an open journal is left open (not toggled shut)", G.journalToggled == 1 and G.journalShown is True)
+G.ForeverDungeonJournal_NS.IsDungeonLocked = lua.eval("function(name) return name == 'Alpha Keep' end")
+G.journalCall = None
+dl[0]._scripts["OnClick"](dl[0])
+check("a locked dungeon is reported, not silently ignored", G.journalCall is None and "still locked" in last_print(), last_print())
+G.ForeverDungeonJournal_NS.IsDungeonLocked = None
+G.ForeverDungeonJournal_NS.ToggleJournal = None
+G.ForeverDungeonJournalFrame = None
 G.ForeverDungeonJournal_NS.OpenQuestPage = lua.eval("function() error('journal blew up') end")
 dl[0]._scripts["OnClick"](dl[0])
 check("an error in the journal is reported, not thrown", "Couldn't open the Dungeon Journal" in last_print(), last_print())
 G.ForeverDungeonJournal_NS.OpenQuestPage = lua.eval("function(name, id) _G.journalCall = { name, id } end")
+G.SlashCmdList["QUESTTHREAD"]("166")
+for mode in (None, "shift", "alt"):
+    r = chain_row(166)
+    G.testShift, G.testAlt = mode == "shift", mode == "alt"
+    try:
+        r._scripts["OnClick"](r, "RightButton")
+        err = None
+    except Exception as e:
+        err = e
+    check("right-click on a dungeon quest (%s) does not throw" % mode, err is None, err)
+G.testShift, G.testAlt = False, False
 G.SlashCmdList["QUESTTHREAD"]("5")
 check("a quest in a dungeon shows it, one outside none", "Dungeon: Test Dungeon" in where_of(5) and ("Dungeon:" not in where_of(93)), (where_of(5), where_of(93)))
 check("every shown link sits on a where line that is showing", all(b.fs._shown for b in shown_links()))

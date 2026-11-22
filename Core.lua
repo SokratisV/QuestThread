@@ -75,7 +75,11 @@ end
 -- The quest's chain: every quest connected to it through prerequisites and follow-ups
 -- (breadcrumbs excluded), grouped into steps. Quests in the same step are alternatives or
 -- parallel branches. info(id) -> { name, xpLevel, xpBase, rep } supplies per-quest details.
-function Core.Chain(idx, startId, info)
+-- who (optional) = { race = raceId, class = classId }: a step or lead-in quest meant for another race or class is
+-- left out (the two factions often have their own version of a step), using info's raceMask / classMask. The quest
+-- you start from always stays, and the others are still walked through, so a chain the other faction's step
+-- connects is not cut in two.
+function Core.Chain(idx, startId, info, who)
   if not idx.known[startId] then return nil end
   local known = idx.known
   local seen = { [startId] = true }
@@ -96,6 +100,15 @@ function Core.Chain(idx, startId, info)
             end
           end
         end
+      end
+    end
+  end
+
+  if who then
+    for id in pairs(seen) do
+      if id ~= startId then
+        local i = info(id) or {}
+        if not Core.Eligible(i.raceMask, i.classMask, who.race, who.class) then seen[id] = nil end
       end
     end
   end
@@ -158,7 +171,9 @@ function Core.Chain(idx, startId, info)
   for _, id in ipairs(sortedKeys(seen)) do
     local own = {}
     for _, b in ipairs(idx.bcs[id] or {}) do
-      if known[b] and not seen[b] then own[#own + 1] = b end
+      local bi = who and info(b) or nil
+      local mine = not bi or Core.Eligible(bi.raceMask, bi.classMask, who.race, who.class)
+      if known[b] and not seen[b] and mine then own[#own + 1] = b end
     end
     table.sort(own)
     for _, b in ipairs(own) do

@@ -66,7 +66,7 @@ While the window is open it follows whichever quest you open in the quest log. E
   "Breadcrumb" row right above the quest it leads into, with its own status icon, zone and ID (Ctrl+C, click and
   tooltip work as on any row). It says "No longer needed" once you already have or finished the quest it leads
   into, and is not counted in the step numbers, XP or reward totals. Only what QuestieDB lists as a breadcrumb
-  is shown. Every breadcrumb quest carries a small **bread icon** before its name (in the chain, in lists of
+  is shown, and one meant for another race, class or faction is left out (the two factions often have their own lead-in to the same quest). Every breadcrumb quest carries a small **bread icon** before its name (in the chain, in lists of
   results, in tooltips and in the objectives popup).
 - **Objectives popup:** **left-click a quest** and a panel opens beside the window (on the other side when
   there is no room) with what to do: the quest's objective text, each creature to kill, object to use or item to
@@ -83,7 +83,7 @@ name) or with `/qthread zone <name>`; with no name it shows the zone you are sta
 - **Filter chips:** **Available**, **In log**, **Missed**, **Done**, **All**, each with its count.
 - **Missed** means a quest you can no longer do (or have outgrown), and the row says why: you already did a later
   step of its chain ("Skipped"), a quest it excludes is done or in your log, you are over its level cap, or it
-  is grey to you ("Outleveled"). Quests meant for another race, class or faction are left out of the list.
+  is grey to you ("Outleveled"). Quests meant for another race, class or faction are left out of the list, and out of a chain's steps.
 - **By type** (the default) shows chains (one row each, with its steps, level range and how much is done),
   then single quests, then **the objects and items that start quests** (a poster, a dropped note) with the quest
   each one starts. **By giver** (the second tab at the right, lit when active like Chains and Zones) shows one fold-out header per NPC, object or item,

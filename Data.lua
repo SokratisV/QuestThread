@@ -105,7 +105,16 @@ function Data.Info(id)
     preS = QuestDB.preQuestSingle(id),
     objective = QuestDB.objectivesText(id),
     maxLevel = QuestDB.requiredMaxLevel and QuestDB.requiredMaxLevel(id) or nil,
+    raceMask = QuestDB.requiredRaces and QuestDB.requiredRaces(id) or nil,
+    classMask = QuestDB.requiredClasses and QuestDB.requiredClasses(id) or nil,
   }
+end
+
+-- Your race and class ids, for leaving out what is meant for others (nil when the client will not say).
+function Data.PlayerIds()
+  local race = UnitRace and select(3, UnitRace("player")) or nil
+  local class = UnitClass and select(3, UnitClass("player")) or nil
+  return race, class
 end
 
 function Data.IsDone(id)
@@ -388,10 +397,22 @@ function Data.DungeonOf(id)
 end
 
 -- Opens the journal on the quest's page in its dungeon. Returns true, or false and a message.
+-- The journal's OpenQuestPage only picks the page; the window itself has to be shown first (its own callers,
+-- the quest tracker and the map markers, do the same).
 function Data.OpenInJournal(id)
   local name = Data.DungeonOf(id)
   if not name then return false, "That quest isn't in the Dungeon Journal." end
-  local ok, err = pcall(_G.ForeverDungeonJournal_NS.OpenQuestPage, name, id)
+  local fdj = _G.ForeverDungeonJournal_NS
+  local ok, err = pcall(function()
+    local window = _G.ForeverDungeonJournalFrame
+    if window and not window:IsShown() then
+      if fdj.ToggleJournal then fdj.ToggleJournal() else window:Show() end
+    end
+    if fdj.IsDungeonLocked and fdj.IsDungeonLocked(name) then
+      error("that dungeon is still locked in the journal")
+    end
+    fdj.OpenQuestPage(name, id)
+  end)
   if not ok then return false, "Couldn't open the Dungeon Journal: " .. tostring(err) end
   return true
 end
