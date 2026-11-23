@@ -8,17 +8,6 @@ local function DB()
   return QuestThreadDB
 end
 
--- The quest whose detail view is open in the quest log, or nil in the list view.
-local function DetailQuest()
-  local q = QuestMapFrame_GetDetailQuestID and QuestMapFrame_GetDetailQuestID()
-  if (not q or q == 0) and QuestMapFrame and QuestMapFrame.DetailsFrame and QuestMapFrame.DetailsFrame:IsShown() then
-    q = QuestMapFrame.DetailsFrame.questID
-    if (not q or q == 0) and C_QuestLog and C_QuestLog.GetSelectedQuest then q = C_QuestLog.GetSelectedQuest() end
-  end
-  if not q or q == 0 then return nil end
-  return q
-end
-
 -- Looks like a stock WoW minimap button: round gold ring, dark disc, chain icon, round glow on hover.
 -- (Blizzard's own textures; sizes follow the standard 31-px minimap button, scaled to w.)
 local function MakeChainButton(parent, w, h, name)
@@ -134,59 +123,6 @@ local function UpdateRow(row)
   b:Show()
 end
 
--- ---- a Chain button on a quest's detail view (movable) ----
-local detailButton
-local DEFAULT_X, DEFAULT_Y = -28, -34
-
--- Default: right beside the Back button. A position you set by Shift-dragging wins; with no Back
--- button to be found, the old top-right corner spot is used.
-local detailAnchor
-local function BackButton()
-  local d = QuestMapFrame and QuestMapFrame.DetailsFrame
-  if not d then return nil end
-  return d.BackButton or (d.BackFrame and d.BackFrame.BackButton)
-end
-
-local function PlaceDetailButton()
-  local pos = DB().button
-  local back = not pos and BackButton() or nil
-  detailAnchor = back
-  detailButton:ClearAllPoints()
-  if back then
-    detailButton:SetPoint("LEFT", back, "RIGHT", 8, 0)
-  else
-    detailButton:SetPoint("TOPRIGHT", QuestMapFrame, "TOPRIGHT", pos and pos[1] or DEFAULT_X, pos and pos[2] or DEFAULT_Y)
-  end
-end
-
--- The quest details panel is a sibling drawn over QuestMapFrame's own level, which hid the button
--- behind it; keep the button a few levels above that panel (and everything in it).
-local function RaiseDetailButton()
-  local ref = QuestMapFrame.DetailsFrame or QuestMapFrame
-  local want = ref:GetFrameLevel() + 30
-  if detailButton:GetFrameLevel() ~= want then detailButton:SetFrameLevel(want) end
-end
-
-local function CreateDetailButton()
-  detailButton = MakeChainButton(QuestMapFrame, 26, 26)
-  PlaceDetailButton()
-  Tip(detailButton, "Show this quest's whole chain (Shift-drag to move)")
-  detailButton:SetScript("OnClick", function()
-    local q = DetailQuest()
-    if q then UI.Open(q) end
-  end)
-  detailButton:SetMovable(true)
-  detailButton:RegisterForDrag("LeftButton")
-  detailButton:SetScript("OnDragStart", function(self) if IsShiftKeyDown() then self:StartMoving() end end)
-  detailButton:SetScript("OnDragStop", function(self)
-    self:StopMovingOrSizing()
-    DB().button = { self:GetRight() - QuestMapFrame:GetRight(), self:GetTop() - QuestMapFrame:GetTop() }
-    PlaceDetailButton()
-  end)
-  RaiseDetailButton()
-  detailButton:Hide()
-end
-
 local driver, acc = nil, 0
 local function Tick(_, dt)
   acc = acc + dt
@@ -194,21 +130,12 @@ local function Tick(_, dt)
   acc = 0
   if not (QuestMapFrame and QuestMapFrame:IsVisible()) then return end
   ForEachRow(UpdateRow)
-  if detailButton then
-    local show = DetailQuest() ~= nil
-    if show then
-      RaiseDetailButton()
-      if not DB().button and BackButton() ~= detailAnchor then PlaceDetailButton() end
-    end
-    detailButton:SetShown(show)
-  end
 end
 
 local hooked = false
 local function HookQuestLog()
   if hooked or not QuestMapFrame then return end
   hooked = true
-  CreateDetailButton()
   driver = CreateFrame("Frame")
   driver:SetScript("OnUpdate", Tick)
   -- Follow the quest log: opening another quest while the chain window is up updates it.
@@ -284,12 +211,10 @@ local function StartIconWatch()
   end)
 end
 
--- What a click on the minimap button does: close the window if it is up; otherwise open it on the quest
--- that is open in the quest log, or empty (ready for a search).
+-- What a click on the minimap button does: close the window if it is up; otherwise open it on the Zones tab,
+-- on the area you are standing in.
 local function ToggleWindow()
-  if UI.IsShown() then return UI.Toggle() end
-  local q = DetailQuest()
-  if q then UI.Open(q) else UI.Toggle() end
+  UI.Toggle()
 end
 
 -- ---- slash command ----
@@ -299,10 +224,9 @@ SLASH_QUESTTHREAD3 = "/qt"
 SlashCmdList["QUESTTHREAD"] = function(msg)
   msg = (msg or ""):match("^%s*(.-)%s*$")
   if msg == "resetbutton" then
-    DB().button = nil
+    DB().button = nil -- (an old setting: the detail-view button is gone)
     ns.MapPanel.ResetButton()
-    if detailButton then PlaceDetailButton() end
-    Say("Detail-view and map buttons moved back to their default places.")
+    Say("The map button moved back to its default place.")
   elseif msg == "minimap" then
     Say(ns.MinimapButton.Toggle() and "Minimap button shown." or "Minimap button hidden. Type /qthread minimap to show it again.")
   elseif msg == "reset" then
@@ -310,7 +234,6 @@ SlashCmdList["QUESTTHREAD"] = function(msg)
     DB().button = nil
     ns.MinimapButton.Reset()
     ns.MapPanel.ResetButton()
-    if detailButton then PlaceDetailButton() end
     Say("Window and buttons put back (centre of the screen, normal size).")
   elseif msg:match("^scale") then
     local v = tonumber(msg:match("^scale%s+([%d%.]+)"))
@@ -328,8 +251,7 @@ SlashCmdList["QUESTTHREAD"] = function(msg)
       for i = 1, math.min(#r.lines, 15) do print("  " .. r.lines[i]) end
     end
   elseif msg == "" then
-    local q = DetailQuest()
-    if q then UI.Open(q) else UI.Toggle() end
+    UI.Toggle()
   else
     UI.OpenText(msg)
   end

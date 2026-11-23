@@ -318,11 +318,21 @@ function Data.PlaceText(place)
   return ("%s (%.0f, %.0f)"):format(Data.ZoneName(place.area, place.uiMap), place.x, place.y)
 end
 
+-- Does the game have this map? A dungeon's own map often does not exist on this client, and opening a map that is
+-- not there makes Blizzard's world map code throw. (True when the client cannot say.)
+function Data.MapExists(m)
+  if type(m) ~= "number" then return false end
+  if not (C_Map and C_Map.GetMapInfo) then return true end
+  local ok, info = pcall(C_Map.GetMapInfo, m)
+  return ok and info ~= nil
+end
+
 -- Opens the map on the place and sets a waypoint (TomTom if installed, else the game's own).
 -- Returns true, or false and a message.
 local function setWaypoint(place, title)
   if not (place and place.uiMap) then return false, "No map location is known for that." end
   local m, x, y = place.uiMap, place.x / 100, place.y / 100
+  if not Data.MapExists(m) then return false, "The game has no map for " .. Data.ZoneName(place.area, m) .. "." end
   if C_Map and C_Map.OpenWorldMap then pcall(C_Map.OpenWorldMap, m) end
   if TomTom and TomTom.AddWaypoint then
     TomTom:AddWaypoint(m, x, y, { title = title, world = true, minimap = true })
@@ -475,6 +485,7 @@ end
 function Data.OpenMapAt(area)
   local m = Data.UiMap(area)
   if not (m and C_Map and C_Map.OpenWorldMap) then return false, "No map is known for " .. Data.ZoneName(area) .. "." end
+  if not Data.MapExists(m) then return false, "The game has no map for " .. Data.ZoneName(area) .. "." end
   local ok, err = pcall(C_Map.OpenWorldMap, m)
   if not ok then return false, "Couldn't open the map: " .. tostring(err) end
   return true

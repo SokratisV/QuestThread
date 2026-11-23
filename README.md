@@ -14,16 +14,15 @@ Built for **WoW Forever** (client interface 16001).
 
 ## Opening the chain
 - **Quest log:** every quest in the list has a small round chain-link button next to its tracking checkbox
-  (or next to its "(Dungeon)" tag). In a quest's detail view the button sits beside the Back button
-  (Shift-drag to move it).
-- **Minimap:** a chain button on the minimap opens and closes the window (on the quest open in your log, if
-  there is one). Drag it to move it around the minimap. Right-click it and choose "Hide minimap button" to turn it off
+  (or next to its "(Dungeon)" tag).
+- **Minimap:** a chain button on the minimap opens and closes the window (on the Zones tab, on the area you are
+  standing in). Drag it to move it around the minimap. Right-click it and choose "Hide minimap button" to turn it off
   (the chat then tells you how to get it back); `/qthread minimap` hides or shows it.
 - **Map:** hover a Questie quest icon on the world map or minimap and **Ctrl+click** it. This works for
   quests you haven't picked up yet.
-- **Search:** `/qthread` opens the window; type part of a quest name, an ID or a quest link in its box (or
-  `/qthread defias`). One match opens it; several show a list to pick from. `/qthread` on its own opens the
-  quest that is open in your log.
+- **Search:** `/qthread` (or `/qt`) opens the window on the Zones tab, on the area you are standing in; type part of
+  a quest name, an ID or a quest link in its box (or `/qthread defias`). One match opens it; several show a list to
+  pick from.
 
 - **Talking to someone:** the quest dialogue (accept, progress and reward steps) gets the chain button and the
   quest's ID in its top-right corner. The ID is green for a finished quest, **and for a repeatable quest you
@@ -32,7 +31,13 @@ Built for **WoW Forever** (client interface 16001).
   flag (dailies and weeklies) and Questie's My Journey history if you have Questie. If the QuestID addon is also
   loaded, QuestThread adds only the chain button next to its text and turns that text green for such a quest.
 
-While the window is open it follows whichever quest you open in the quest log. Escape closes it.
+While the window is open it follows whichever quest you open in the quest log. Escape closes it. Every time the
+window opens, the search box starts empty, and the Zones tab opens on the area you are standing in (not the one you
+left it on).
+
+The window follows FlareUI's look: a header with the chain-link badge, the name and version and the two views as pill
+tabs, the search box with its magnifier, the quest or zone you are looking at with a thin progress bar under it
+(green done, blue in your log, gold available), bronze section bands, and filter chips lit on a gold plate.
 
 ## What the window shows
 - The chain as numbered steps (quests on a branch share a step number), each with its level and a status icon:
@@ -47,7 +52,9 @@ While the window is open it follows whichever quest you open in the quest log. E
 - **Places are links.** The blue line under a quest lists its zones, and each zone name is clickable: it opens the
   world map on that area (the same line sits in the objectives popup under "Where"). When the optional
   **DungeonJournal** addon is installed and lists the quest, the line starts with an amber "Dungeon: <name>" that
-  opens the journal on that quest's page in its dungeon. Without the journal there is simply no dungeon link.
+  opens the journal on that quest's page in its dungeon (and the dungeon's own area is then not repeated as a zone
+  link). Without the journal there is simply no dungeon link. A zone the game has no map for (a dungeon's own map,
+  often) says so when clicked instead of opening the map.
 - Clickable text ("You are here", zone names, the dungeon) is **underlined** like a link, and the line lights up
   white while the mouse is over it.
 - **Right-click a step** to open the map and set a waypoint where its objectives are: the middle of the crowd
@@ -68,8 +75,8 @@ While the window is open it follows whichever quest you open in the quest log. E
   into, and is not counted in the step numbers, XP or reward totals. Only what QuestieDB lists as a breadcrumb
   is shown, and one meant for another race, class or faction is left out (the two factions often have their own lead-in to the same quest). Every breadcrumb quest carries a small **bread icon** before its name (in the chain, in lists of
   results, in tooltips and in the objectives popup).
-- **Objectives popup:** **left-click a quest** and a panel opens beside the window (on the other side when
-  there is no room) with what to do: the quest's objective text, each creature to kill, object to use or item to
+- **Details pane:** **left-click a quest** and the window grows a pane on its right (it slides left if the screen has
+  no room) with what to do: the quest's objective text, each creature to kill, object to use or item to
   collect with where it is (and what drops the item; an item shows its icon, and **hovering it shows the item's own game tooltip**), the quest's **rewards** (XP, reputation, and every reward item with its icon and the same hover tooltip), and where the quest starts and is handed in. When the quest
   is in your quest log it also shows **your progress with the game's own counts** ("Boar slain: 3/8"): QuestieDB
   says what to kill and collect but not how many, so the numbers can only come from the quest log. The panel
@@ -80,7 +87,9 @@ The **Zones** tab, next to **Chains** under the title, lists every quest that **
 chain it belongs to. A quest also counts for the zone your quest log files it under, so a quest you hold always
 shows under its own zone's **In log** chip, even when its giver stands in another zone or has no known spawn. Pick a zone by typing its name, or open it from a zone link (**Ctrl+click** a blue zone
 name) or with `/qthread zone <name>`; with no name it shows the zone you are standing in.
-- **Filter chips:** **Available**, **In log**, **Missed**, **Done**, **All**, each with its count.
+- **Filter chips:** **Available**, **In log**, **Missed**, **Done**, **All** (the counts are in the line under the
+  zone's name). The sections of the list (**Chains**, **Single quests**, the object and item starters, **Breadcrumbs**,
+  and each giver in By giver) fold shut when you click their header (plus icon), and open again (minus icon).
 - **Missed** means a quest you can no longer take at all, and the row says why: you already did a later
   step of its chain ("Skipped"), a quest it excludes is done or in your log, or you are over its level cap.
 - A quest you have **outleveled** (grey to you in the game) is still **Available**, since you can take it, and
@@ -88,12 +97,13 @@ name) or with `/qthread zone <name>`; with no name it shows the zone you are sta
   is never counted as missed. Quests meant for another race, class or faction, and **profession quests for a profession you have not learned**
   (only whether you have the profession counts, not your skill in it), are left out of the list, and out of a
   chain's steps. WoW Forever's Skyborne races are recognised.
-- **By type** (the default) shows chains (one row each, with its steps, level range and how much is done),
+- **By type** (the default) shows chains (one row each, with how much is done),
   then single quests, then **the objects and items that start quests** (a poster, a dropped note) with the quest
   each one starts. **By giver** (the second tab at the right, lit when active like Chains and Zones) shows one fold-out header per NPC, object or item,
   with the quests it gives. **Crumbs** (the third) lists only the **breadcrumb quests** (the optional lead-ins to a
   longer quest) of the zone, by level, each saying what it leads into; the filter chips apply to it too.
-- Click a row for the objectives popup; its **Chain** button opens the chain. Right-click is the waypoint, as
+- Click a row for the details pane. A quest that is part of a chain has a small **chain-link icon** at the right of its
+  row (so does each chain row): click it to open the chain. Right-click is the waypoint, as
   everywhere.
 - **Map panel:** the QuestThread button on the world map (Shift-drag to move it) or `/qthread map` opens the same
   list in a panel beside the map, for the zone the map is showing, and it follows the map as you move between
