@@ -165,6 +165,44 @@ function Core.Chain(idx, startId, info, who)
     end
   end
 
+  -- The chain's main line is what its last step needs (directly or through other quests); every other quest is an
+  -- optional side quest. Main quests are labelled 1, 2, 3 in the order shown; an optional one is lettered (a, b...)
+  -- after the main quest it follows.
+  local required, last = {}, layers[#layers]
+  if last then
+    local stack = {}
+    for _, e in ipairs(last) do required[e.id] = true; stack[#stack + 1] = e.id end
+    while #stack > 0 do
+      local id = table.remove(stack)
+      for p in pairs(idx.prevs[id] or {}) do
+        if seen[p] and not required[p] then required[p] = true; stack[#stack + 1] = p end
+      end
+    end
+  end
+  local function letters(n) -- 1 = a ... 26 = z, 27 = aa
+    local s = ""
+    while n > 0 do
+      n = n - 1
+      s = string.char(97 + n % 26) .. s
+      n = floor(n / 26)
+    end
+    return s
+  end
+  local mainCount, optionalCount, run = 0, 0, 0
+  for _, layer in ipairs(layers) do
+    for _, e in ipairs(layer) do
+      if not required[e.id] then
+        e.optional = true
+        optionalCount, run = optionalCount + 1, run + 1
+        e.label = letters(run)
+      else
+        e.optional = false
+        mainCount, run = mainCount + 1, 0
+        e.label = tostring(mainCount)
+      end
+    end
+  end
+
   -- Breadcrumbs: optional quests that hand you a chain quest earlier. One that is itself part of the shown
   -- chain (you opened it) is not repeated. Each lands on the entry it leads into as `crumbs` (by id).
   local breadcrumbs, crumbsOf = {}, {}
@@ -193,7 +231,46 @@ function Core.Chain(idx, startId, info, who)
   return {
     startId = startId, layers = layers, parts = #layers, quests = total,
     currentLayer = current, breadcrumbs = breadcrumbs, truncated = truncated,
+    mainCount = mainCount, optionalCount = optionalCount,
   }
+end
+
+-- Lays a chain out as a graph: one column per step (the layers of Core.Chain), and within a column the main quests
+-- first, then the optional ones, each group ordered by where its prerequisites sit (so lines run roughly straight).
+-- prevs[id] = { [prerequisiteId] = true }. Returns { nodes = { [id] = { col, row, entry } },
+-- edges = { { from, to } ... } (a prerequisite to the quest it unlocks), cols, rows } (columns and rows from 0).
+function Core.GraphLayout(layers, prevs)
+  local nodes, edges, maxRows = {}, {}, 0
+  for c, layer in ipairs(layers) do
+    local key = {}
+    for _, e in ipairs(layer) do
+      local sum, n = 0, 0
+      for p in pairs(prevs[e.id] or {}) do
+        local pn = nodes[p]
+        if pn then sum, n = sum + pn.row, n + 1 end
+      end
+      key[e.id] = n > 0 and sum / n or 0
+    end
+    local list = {}
+    for _, e in ipairs(layer) do list[#list + 1] = e end
+    table.sort(list, function(a, b)
+      local oa, ob = a.optional and 1 or 0, b.optional and 1 or 0
+      if oa ~= ob then return oa < ob end
+      if key[a.id] ~= key[b.id] then return key[a.id] < key[b.id] end
+      return a.id < b.id
+    end)
+    for r, e in ipairs(list) do nodes[e.id] = { col = c - 1, row = r - 1, entry = e } end
+    if #list > maxRows then maxRows = #list end
+  end
+  for _, layer in ipairs(layers) do
+    for _, e in ipairs(layer) do
+      local ps = {}
+      for p in pairs(prevs[e.id] or {}) do if nodes[p] then ps[#ps + 1] = p end end
+      table.sort(ps)
+      for _, p in ipairs(ps) do edges[#edges + 1] = { from = p, to = e.id } end
+    end
+  end
+  return { nodes = nodes, edges = edges, cols = #layers, rows = maxRows }
 end
 
 -- What still stands between the player and a quest: a list of short texts (empty = nothing).

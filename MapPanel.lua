@@ -303,39 +303,12 @@ end
 
 function MP.IsShown() return panel ~= nil and panel:IsShown() end
 
-local function PlaceButton()
-  local pos = DB().mapButton
-  button:ClearAllPoints()
-  button:SetPoint("TOPRIGHT", WorldMapFrame, "TOPRIGHT", pos and pos[1] or -112, pos and pos[2] or -32)
-end
-
-function MP.ResetButton()
-  DB().mapButton = nil
-  if button then PlaceButton() end
-end
-
--- The map's own button for the panel, and the panel coming back when the map opens (if you left it on).
+-- The panel coming back when the map opens (if you left it on). There is no button on the map itself: it floated over
+-- other addons' map frames, and /qthread map opens the panel.
+local inited
 function MP.Init()
-  if button or not WorldMapFrame or not ns.MakeChainButton then return end
-  button = ns.MakeChainButton(WorldMapFrame, 26, 26, "QuestThreadMapButton")
-  button:SetFrameLevel(WorldMapFrame:GetFrameLevel() + 40)
-  PlaceButton()
-  button:SetScript("OnClick", function() MP.Toggle() end)
-  button:SetScript("OnEnter", function(self)
-    GameTooltip:SetOwner(self, "ANCHOR_LEFT")
-    GameTooltip:SetText("QuestThread")
-    GameTooltip:AddLine("Show the quests that start in this zone (Shift-drag to move)", 1, 1, 1, true)
-    GameTooltip:Show()
-  end)
-  button:SetScript("OnLeave", function() GameTooltip:Hide() end)
-  button:SetMovable(true)
-  button:RegisterForDrag("LeftButton")
-  button:SetScript("OnDragStart", function(self) if IsShiftKeyDown and IsShiftKeyDown() then self:StartMoving() end end)
-  button:SetScript("OnDragStop", function(self)
-    self:StopMovingOrSizing()
-    DB().mapButton = { self:GetRight() - WorldMapFrame:GetRight(), self:GetTop() - WorldMapFrame:GetTop() }
-    PlaceButton()
-  end)
+  if inited or not WorldMapFrame then return end
+  inited = true
   WorldMapFrame:HookScript("OnShow", function()
     if DB().mapPanel then MP.ShowPanel() end
   end)

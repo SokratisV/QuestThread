@@ -223,18 +223,15 @@ SLASH_QUESTTHREAD2 = "/questthread"
 SLASH_QUESTTHREAD3 = "/qt"
 SlashCmdList["QUESTTHREAD"] = function(msg)
   msg = (msg or ""):match("^%s*(.-)%s*$")
-  if msg == "resetbutton" then
-    DB().button = nil -- (an old setting: the detail-view button is gone)
-    ns.MapPanel.ResetButton()
-    Say("The map button moved back to its default place.")
+  if msg == "log" then
+    UI.ShowLog()
   elseif msg == "minimap" then
     Say(ns.MinimapButton.Toggle() and "Minimap button shown." or "Minimap button hidden. Type /qthread minimap to show it again.")
   elseif msg == "reset" then
     UI.Reset()
-    DB().button = nil
+    DB().button, DB().mapButton = nil, nil -- (old settings: those buttons are gone)
     ns.MinimapButton.Reset()
-    ns.MapPanel.ResetButton()
-    Say("Window and buttons put back (centre of the screen, normal size).")
+    Say("Window and minimap button put back (centre of the screen, normal size).")
   elseif msg:match("^scale") then
     local v = tonumber(msg:match("^scale%s+([%d%.]+)"))
     if v then Say(("Window scale set to %.2f."):format(UI.SetScale(v))) else Say("Usage: /qthread scale 1.2 (from 0.6 to 1.6)") end

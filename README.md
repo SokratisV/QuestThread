@@ -40,7 +40,12 @@ tabs, the search box with its magnifier, the quest or zone you are looking at wi
 (green done, blue in your log, gold available), bronze section bands, and filter chips lit on a gold plate.
 
 ## What the window shows
-- The chain as numbered steps (quests on a branch share a step number), each with its level and a status icon:
+- The chain's quests numbered 1, 2, 3 in order, each with its level and a status icon. The **main line** is what the
+  chain's last quest needs; every other quest is an **optional side quest**: it hangs to the right off a rail with an
+  elbow into a round badge holding its letter (a, b...), tagged "Optional", and dimmer, after the main quest it
+  follows; the rail runs through a group of side quests and ends at the last one. A locked quest names what it needs
+  with that number ("Finish one of: Blight No More (1), Blight No More (3)"), and the header says how many are main
+  and how many optional. Each quest shows its level and a status icon:
   a green check (done), a blue "?" (in your log), a gold "!" (available now) or a red lock (locked). Locked quests say what they need on a second line, and your own quest is highlighted and marked "You are here".
 - Under each step, in blue, **where it happens**: the zones where its kill targets, objects and item drops
   are found (or where it is handed in, if it has no such objective). The tooltip spells it out per objective,
@@ -82,6 +87,24 @@ tabs, the search box with its magnifier, the quest or zone you are looking at wi
   says what to kill and collect but not how many, so the numbers can only come from the quest log. The panel
   follows the quest you click, closes with its X, and does not open when you open a quest some other way.
 
+- **List | Graph** (the two tabs right of the search box): the Graph view draws the chain as **columns** (one per step)
+  of boxes joined by **lines** from each quest to what it unlocks, main quests on top and optional ones under them.
+  Hover a box to light its lines and see its tooltip; click for the details pane; right-click for the waypoint, as in
+  the list. The box whose details are open gets a bright ring, and its lines stay lit. **Drag** to pan, **Ctrl+scroll**
+  (or the - and + buttons) to zoom, **Alt+scroll** to scroll sideways (a hint under the graph says so), **Fit** to fit
+  the whole chain. The window grows wider to fit the chain, but never past half the screen's width; it opens fitted,
+  centred on your quest.
+
+## My Log
+The **My Log** tab (right of **Zones**, or `/qthread log`) is a quick view of your own quest log: your quests under
+the game's own zone headers, each with its level, the XP it gives, and either "Ready to turn in" or its first
+unfinished objective with the game's own count ("Boar slain: 3/8  +1 more"). The title line says how many are ready
+and how many are in progress, with a bar. Click a quest for the details pane, right-click for the waypoint, or use
+the chain-link icon (for a quest that is part of a chain) to open its chain. A zone header folds shut like the other
+sections. Type in the search box to filter the log by name. The list follows your quest log as it changes. A header
+you have folded shut in the game's own quest log hides its quests from the game's list, so it shows with a note
+instead.
+
 ## Zones (version 1.1)
 Clicking the **Zones** tab shows the **list of all zones**, split by continent (each continent folds shut), with how
 far you are in each: "done / total" quests that start there, and a thin bar (green once every quest is done). Your
@@ -110,7 +133,7 @@ name) or with `/qthread zone <name>`; with no name it shows the zone you are sta
 - Click a row for the details pane. A quest that is part of a chain has a small **chain-link icon** at the right of its
   row (so does each chain row): click it to open the chain. Right-click is the waypoint, as
   everywhere.
-- **Map panel:** the QuestThread button on the world map (Shift-drag to move it) or `/qthread map` opens the same
+- **Map panel:** `/qthread map` opens the same
   list in a panel beside the map, for the zone the map is showing, and it follows the map as you move between
   zones. A click opens the quest in QuestThread's window. The filter is shared with the Zones tab.
 
@@ -121,10 +144,11 @@ you), orange (3-4 above), yellow (within 2), green (still worth XP) and grey (tr
 - `/qthread` (or `/qt`, or `/questthread`): open or close the window
 - `/qthread <part of a name | ID | quest link>`: look a quest up
 - `/qthread zone [name]`: the Zones tab, on that zone (no name: the zone you are in)
+- `/qthread log`: the My Log tab, your own quest log
 - `/qthread map`: show or hide the panel beside the world map
 - `/qthread scale 1.2`: window size (0.6 to 1.6)
 - `/qthread minimap`: hide or show the minimap button
-- `/qthread reset`: window back to the middle of the screen, normal size, and the buttons (quest log, minimap) to their places
+- `/qthread reset`: window back to the middle of the screen, normal size, and the minimap button to its place
 - `/qthread xpcheck`: compare the XP estimate with the client for every quest in your log
 
 ## How XP is worked out
@@ -154,5 +178,6 @@ the UI; they do not exercise the real WoW API. `tools/make-chain-icon.py` redraw
 `tools/make-status-icons.py` redraws `Status.tga`; `tools/make-logo.py` redraws `logo.png` (the CurseForge avatar).
 
 ## License & credits
-MIT, see `LICENSE`. Data: QuestieDB. `Thin.tga` (window border) and the window's look are from
+MIT, see `LICENSE`. Data: QuestieDB. The graph view's idea (a chain as columns joined by lines) was inspired by the
+Completao!! addon; no code was taken from it. `Thin.tga` (window border) and the window's look are from
 [FlareUI](https://www.curseforge.com/wow/addons/flareui) by Malkkav (MIT).

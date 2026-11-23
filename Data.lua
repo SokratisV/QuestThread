@@ -577,6 +577,36 @@ function Data.LiveObjectives(id)
   return out
 end
 
+-- Your quest log as the game lists it: { { name = header, quests = { { id, title, level, ready } ... }, collapsed } ... },
+-- plus the number of quests and how many are ready to turn in. World quests and hidden ones are left out. A header
+-- you have folded shut in the game's own quest log hides its quests from the list the game gives, so it comes with
+-- collapsed = true and none.
+function Data.QuestLog()
+  local groups, cur, total, ready = {}, nil, 0, 0
+  local api = C_QuestLog
+  if not (api and api.GetNumQuestLogEntries and api.GetInfo) then return groups, 0, 0 end
+  for i = 1, api.GetNumQuestLogEntries() or 0 do
+    local ok, info = pcall(api.GetInfo, i)
+    if ok and type(info) == "table" then
+      if info.isHeader then
+        cur = { name = tostring(info.title or "?"), quests = {}, collapsed = info.isCollapsed and true or false }
+        groups[#groups + 1] = cur
+      elseif type(info.questID) == "number" and not info.isHidden and not info.isTask then
+        if not cur then cur = { name = "Quests", quests = {}, collapsed = false }; groups[#groups + 1] = cur end
+        local done = false
+        if api.IsComplete then
+          local ok2, c = pcall(api.IsComplete, info.questID)
+          done = ok2 and c and true or false
+        end
+        cur.quests[#cur.quests + 1] = { id = info.questID, title = info.title, level = info.level, ready = done }
+        total = total + 1
+        if done then ready = ready + 1 end
+      end
+    end
+  end
+  return groups, total, ready
+end
+
 -- A reward item's name: the client's, once it has the item cached, else QuestieDB's.
 function Data.ItemName(id)
   local n = C_Item and C_Item.GetItemNameByID and C_Item.GetItemNameByID(id)

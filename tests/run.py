@@ -8,6 +8,7 @@ Covers Core on synthetic graphs, Core on the real Defias Brotherhood chain, and 
 stub frames (catches nil errors in this addon's own code, not WoW API semantics).
 """
 import json
+import re
 import os
 import struct
 import sys
@@ -174,6 +175,14 @@ function(quests, items)
     function m.GetVerticalScroll() return 0 end
     function m.GetPoint() return "CENTER", nil, "CENTER", 0, 0 end
     function m.CreateTexture() return stub() end
+    function m.CreateLine() return stub() end
+    function m.SetThickness(s, v) s._thick = v end
+    function m.SetStartPoint(s, p, rel, x, y) s._start = { x, y } end
+    function m.SetEndPoint(s, p, rel, x, y) s._end = { x, y } end
+    function m.SetColorTexture(s, r, g, b, a) s._vc = { r, g, b, a } end
+    function m.SetScale(s, v) s._scale = v end
+    function m.SetHorizontalScroll(s, v) s._hs = v end
+    function m.GetHorizontalScroll(s) return s._hs or 0 end
     function m.CreateFontString() return stub() end
     local mt = { __index = function(t, k) if m[k] then return m[k] end; if type(k) == "string" and k:match("^%u") then return function() end end end }
     return setmetatable(o, mt)
@@ -349,7 +358,8 @@ check("window title is the quest name", any(t == "The Defias Brotherhood" for t 
 win0 = next(f for f in G.stubs.values() if f._name == "QuestThreadFrame")
 check("the brand row has the chain-link badge and the name, and a version field", win0.brand._text == "QuestThread" and "Chain.tga" in win0.logo._tex and win0.version is not None)
 check("the group tabs have their full names", win0.tabCrumbs.text._text == "Breadcrumbs" and win0.tabGiver.text._text == "By giver" and win0.tabType.text._text == "By type")
-check("the views are labelled Chains and Zones", win0.tabChain.text._text == "Chains" and win0.tabZone.text._text == "Zones")
+check("the views are labelled Chains, Zones and My Log", win0.tabChain.text._text == "Chains" and win0.tabZone.text._text == "Zones" and win0.tabLog.text._text == "My Log")
+check("the graph view says how to scroll sideways and zoom", "Ctrl+scroll: zoom" in win0.gzoom.hint._text and "Alt+scroll: sideways" in win0.gzoom.hint._text and win0.gzoom.hint is not None, win0.gzoom.hint._text)
 check("stats line shows 8 quests", any("8 quests" in t for t in texts), [t for t in texts if "quests" in t])
 G.SlashCmdList["QUESTTHREAD"]("Morbent Fel")
 check("slash with a name resolves", any(t.startswith("Quest 55") or t == "Morbent Fel" for t in [f._text for f in G.stubs.values()]))
@@ -608,10 +618,11 @@ check("each row's status icon is the cell for its status", len(with_entry) >= 8 
 check("the sheet cells are an eighth wide", all(abs(f.status._tc[2] - f.status._tc[1] - CELLW) < 1e-9 for f in with_entry))
 sheet = open(os.path.join(ROOT, "Status.tga"), "rb").read()
 sw, sh, sdepth = struct.unpack("<HHB", sheet[12:17])
-check("Status.tga is 256x32, 32-bit, uncompressed, with the fifth cell (green !) drawn and the sixth empty",
+check("Status.tga is 256x32, 32-bit, uncompressed, with the fifth (green !) and sixth (badge) cells drawn and the seventh empty",
       (sw, sh, sdepth) == (256, 32, 32) and sheet[2] == 2 and len(sheet) == 18 + 256 * 32 * 4
       and max(sheet[18 + 3 + 4 * (y * 256 + x)] for y in range(32) for x in range(128, 160)) == 255
-      and max(sheet[18 + 3 + 4 * (y * 256 + x)] for y in range(32) for x in range(160, 192)) == 0, (sw, sh, sdepth))
+      and max(sheet[18 + 3 + 4 * (y * 256 + x)] for y in range(32) for x in range(160, 192)) == 255
+      and max(sheet[18 + 3 + 4 * (y * 256 + x)] for y in range(32) for x in range(192, 224)) == 0, (sw, sh, sdepth))
 locked_rows = [f for f in with_entry if f.entry.status == "locked"]
 check("locked rows say what they need on a second line", locked_rows and all(f.sub._text.find("Needs:") >= 0 and f.sub._shown for f in locked_rows), len(locked_rows))
 plain = [f for f in with_entry if f.entry.status != "locked" and f.entry.id != 166]
@@ -926,6 +937,200 @@ who4 = D.Who()
 check("a skill line with rank counts as learned even then, and the rest stays unknown", who4.hasSkill(171) is True and who4.hasSkill(333) is None)
 G.C_SkillInfo = None
 
+# ---- a chain with optional side quests, in the window ----
+real_b = Core.Chain(idx, 96077, lua_info)
+real_b_cols = Core.GraphLayout(real_b.layers, idx.prevs).cols
+G.UIParent.GetWidth = lua.eval("function() return 1920 end")
+G.UIParent.GetEffectiveScale = lua.eval("function() return 1 end")
+frame_named("QuestThreadFrame").GetEffectiveScale = lua.eval("function() return 1 end")
+G.SlashCmdList["QUESTTHREAD"]("96077")
+opt_ids = sorted(e.id for layer in real_b.layers.values() for e in layer.values() if e.optional)
+main_ids = sorted(e.id for layer in real_b.layers.values() for e in layer.values() if not e.optional)
+check("(setup) Belle's Ring has main and optional quests", len(opt_ids) > 0 and len(main_ids) > 0, (len(opt_ids), len(main_ids)))
+orows = [chain_row(i) for i in opt_ids]
+mrows = [chain_row(i) for i in main_ids]
+check("an optional side quest hangs to the right on a rail, with a dimmer band, an Optional tag and a letter",
+      all(r.rail._shown and r.stub._shown and r.badge._shown and "Optional" in r.tag._text and r.status._pt[2] == 56 and r.name._pt[2] == 78 and r.num._text.endswith("|r") for r in orows),
+      [(r.entry.id, r.status._pt[2], r.tag._text) for r in orows][:3])
+check("a main quest has its number, no rail, no Optional tag, and the normal indent",
+      all(not r.rail._shown and not r.stub._shown and not r.badge._shown and "Optional" not in r.tag._text and r.status._pt[2] == 24 and r.num._text == r.entry.label for r in mrows),
+      [(r.entry.id, r.num._text) for r in mrows][:3])
+# the rail runs through a group of side quests and ends at the last one's elbow
+order_b = [e.id for layer in real_b.layers.values() for e in layer.values()]
+opt_set = set(opt_ids)
+rail_bad = []
+for k, qid in enumerate(order_b):
+    if qid not in opt_set:
+        continue
+    r = chain_row(qid)
+    goes_on = k + 1 < len(order_b) and order_b[k + 1] in opt_set
+    has_bottom = any(p[1] == "BOTTOMLEFT" for p in r.rail._pts.values())
+    if goes_on != has_bottom or (not goes_on and r.rail._h != 15):
+        rail_bad.append((qid, goes_on, has_bottom, r.rail._h))
+check("the rail runs on while the group of side quests continues, and stops at its last quest's elbow", not rail_bad, rail_bad[:3])
+check("the letter sits in a round badge at the elbow", all(r.badge._tc is not None and abs(r.badge._tc[1] - 5 / 8) < 1e-9 and r.num._pt[2] == 34 for r in orows), [(r.badge._tc, r.num._pt) for r in orows][:1])
+check("main quests are numbered 1, 2, 3 without gaps", [r.num._text for r in sorted(mrows, key=lambda r: -r._pt[5])] == [str(n) for n in range(1, len(main_ids) + 1)])
+check("the header says how many are main and how many optional", ("(%d main, %d optional)" % (len(main_ids), len(opt_ids))) in frame_named("QuestThreadFrame").stats._text, frame_named("QuestThreadFrame").stats._text)
+needs = [r for r in orows + mrows if any("Finish" in u for u in r.entry.unmet.values())]
+check("a prerequisite is named with its number, so equal names can be told apart", len(needs) > 0 and all(re.search(r"\([0-9a-z]+\)", " ".join(r.entry.unmet.values())) for r in needs), [list(r.entry.unmet.values()) for r in needs][:2])
+G.SlashCmdList["QUESTTHREAD"]("")
+
+# ---- the chain as a graph ----
+gwin = frame_named("QuestThreadFrame")
+G.QuestThreadDB.chainView = "graph"
+G.SlashCmdList["QUESTTHREAD"]("96077")
+check("the chain view has a List | Graph toggle, Graph lit", gwin.viewToggle._shown and gwin.tabGraph.plate._shown and not gwin.tabList.plate._shown)
+check("the search box makes room for it", gwin.box._w2 > 0 and gwin.box._w2 == gwin._w2 - 28 - 126 - 8, (gwin.box._w2, gwin._w2))
+check("the graph replaces the list: the canvas is shown, the zoom buttons too", gwin.gscroll._shown and gwin.gzoom._shown and not gwin.scroll._shown)
+# the window grows to fit the chain, up to half the screen
+gneed = 2 * 18 + real_b_cols * 156 + (real_b_cols - 1) * 56 + 32
+check("on a 1920-wide screen the window grows towards the chain but stops at half the screen (960)", gwin._w2 == min(gneed, 960) == 960, (gwin._w2, gneed))
+gnodes_ = [f for f in G.stubs.values() if f._shown and f.cur is not None and f.meta is not None and f.questId is not None]
+check("a box for every quest of the chain", sorted(f.questId for f in gnodes_) == sorted(main_ids + opt_ids), (len(gnodes_), len(main_ids) + len(opt_ids)))
+glayout = Core.GraphLayout(real_b.layers, idx.prevs)
+bad = [(f.questId, f._pt[4], f._pt[5]) for f in gnodes_ if f._pt[4] != 18 + glayout.nodes[f.questId].col * 212 or f._pt[5] != -(18 + glayout.nodes[f.questId].row * 68)]
+check("each box sits in its column and row", not bad, bad[:3])
+glines_ = [f for f in G.stubs.values() if f._shown and f._start is not None and f._end is not None]
+check("every line is straight along an axis, and there are lines for every edge", len(glines_) >= len(glayout.edges) and all(f._start[1] == f._end[1] or f._start[2] == f._end[2] for f in glines_), (len(glines_), len(glayout.edges)))
+opt_nodes = [f for f in gnodes_ if f.entry.optional]
+check("optional quests are lettered and dimmer, main ones numbered", all("|cff8a7d68" in f.num._text for f in opt_nodes) and all(f.num._text == "|cffffd100%s|r" % f.entry.label for f in gnodes_ if not f.entry.optional))
+gn = gnodes_[0]
+G.tipLines = lua.table()
+gn._scripts["OnEnter"](gn)
+touching = [f for f in glines_ if f._vc is not None and f._vc[1] == 1 and f._vc[2] == 0.86]
+check("hovering a box lights its lines gold and shows its tooltip", len(touching) > 0 and len(list(G.tipLines.values())) > 0, (len(touching), len(list(G.tipLines.values()))))
+gn._scripts["OnLeave"](gn)
+check("leaving puts the lines' colours back", not any(f._vc is not None and f._vc[1] == 1 and f._vc[2] == 0.86 for f in glines_))
+gn._scripts["OnClick"](gn, "LeftButton")
+gpop = frame_named("QuestThreadObjectives")
+check("clicking a box opens the details pane", gpop is not None and gpop._shown and gpop.title._text.find(gn.entry.name) >= 0)
+check("the selected box has a bright ring and no other box does", gn.sel._shown and not any(f.sel._shown for f in gnodes_ if f is not gn), [f.questId for f in gnodes_ if f.sel._shown])
+sel_lines = [f for f in glines_ if f._vc is not None and f._vc[1] == 1 and f._vc[2] == 0.86]
+check("the selected box's lines stay lit gold, and a little thicker", len(sel_lines) > 0 and all(f._thick == 3 for f in sel_lines) and any(f._thick == 2 for f in glines_ if f not in sel_lines), len(sel_lines))
+gn2 = next(f for f in gnodes_ if f is not gn)
+gn2._scripts["OnClick"](gn2, "LeftButton")
+check("selecting another box moves the ring", gn2.sel._shown and not gn.sel._shown)
+gpop.close._scripts["OnClick"](gpop.close)
+check("closing the details takes the ring and the lit lines away", not any(f.sel._shown for f in gnodes_) and not any(f._vc is not None and f._vc[1] == 1 and f._vc[2] == 0.86 for f in glines_))
+zin = gwin.gzoom.inn
+z0 = gwin.gcanvas._scale
+zin._scripts["OnClick"](zin)
+check("the zoom button zooms in", gwin.gcanvas._scale > z0, (z0, gwin.gcanvas._scale))
+gwin.gzoom.fit._scripts["OnClick"](gwin.gzoom.fit)
+check("Fit goes back to fitting the chain in the view", 0.4 <= gwin.gcanvas._scale <= 1.0 and gwin.gcanvas._scale == z0, (z0, gwin.gcanvas._scale))
+# the wheel: Alt sideways, Ctrl zoom, plain up and down
+gwin.gcontent.GetWidth = lua.eval("function() return 3000 end")
+gwin.gcontent.GetHeight = lua.eval("function() return 3000 end")
+gwin.gscroll.SetVerticalScroll = lua.eval("function(s, v) _G.vsCalled = v end")
+G.vsCalled = None
+gwin.gscroll._hs = 0
+G.testAlt = True
+gwin.gscroll._scripts["OnMouseWheel"](gwin.gscroll, -1)
+check("Alt+scroll moves the graph sideways", gwin.gscroll._hs == 60 and G.vsCalled == 0, (gwin.gscroll._hs, G.vsCalled))
+G.testAlt = False
+gwin.gscroll._hs = 0
+gwin.gscroll._scripts["OnMouseWheel"](gwin.gscroll, -1)
+check("plain scroll moves it up and down", gwin.gscroll._hs == 0 and G.vsCalled == 60, (gwin.gscroll._hs, G.vsCalled))
+G.testCtrl = True
+zc = gwin.gcanvas._scale
+gwin.gscroll._scripts["OnMouseWheel"](gwin.gscroll, 1)
+check("Ctrl+scroll zooms", gwin.gcanvas._scale != zc, (zc, gwin.gcanvas._scale))
+G.testCtrl = False
+gwin.gzoom.fit._scripts["OnClick"](gwin.gzoom.fit)
+# on a 3840-wide screen it can show the whole chain, and on a small one it stays at its normal width
+G.UIParent.GetWidth = lua.eval("function() return 3840 end")
+gwin.tabGraph._scripts["OnClick"](gwin.tabGraph)
+check("on a 3840-wide screen the window grows to the chain's full width", gwin._w2 == gneed, (gwin._w2, gneed))
+G.UIParent.GetWidth = lua.eval("function() return 800 end")
+gwin.tabGraph._scripts["OnClick"](gwin.tabGraph)
+check("on a small screen it never goes under its normal width", gwin._w2 == 500, gwin._w2)
+G.UIParent.GetWidth = lua.eval("function() return 1920 end")
+gwin.tabList._scripts["OnClick"](gwin.tabList)
+check("the List tab goes back to normal width", gwin._w2 == 500, gwin._w2)
+gwin.tabGraph._scripts["OnClick"](gwin.tabGraph)
+gwin.tabList._scripts["OnClick"](gwin.tabList)
+check("the List tab goes back to the list (and the choice is remembered)", gwin.scroll._shown and not gwin.gscroll._shown and not gwin.gzoom._shown and G.QuestThreadDB.chainView == "list" and gwin.tabList.plate._shown)
+check("the list is shown again: a row per quest", all(chain_row(i) is not None for i in main_ids + opt_ids))
+G.SlashCmdList["QUESTTHREAD"]("")
+
+# ---- My Log: your own quest log ----
+def tbl(d):
+    return lua.table_from({k: (tbl(v) if isinstance(v, dict) else v) for k, v in d.items()})
+log_entries = {
+    1: {"title": "Elwynn Forest", "isHeader": True, "isCollapsed": False},
+    2: {"title": "The Defias Brotherhood", "questID": 166, "level": 20, "isHeader": False},
+    3: {"title": "Morbent Fel", "questID": 55, "level": 11, "isHeader": False},
+    4: {"title": "Westfall", "isHeader": True, "isCollapsed": False},
+    5: {"title": "A Farm Chore", "questID": 5, "level": 12, "isHeader": False},
+    6: {"title": "Duskwood", "isHeader": True, "isCollapsed": True},
+}
+G.logInfo = tbl(log_entries)
+old_log = {k: G.C_QuestLog[k] for k in ("GetNumQuestLogEntries", "GetInfo", "GetLogIndexForQuestID")}
+G.C_QuestLog.GetNumQuestLogEntries = lua.eval("function() return 6 end")
+G.C_QuestLog.GetInfo = lua.eval("function(i) return logInfo[i] end")
+G.C_QuestLog.IsComplete = lua.eval("function(id) return id == 55 end")
+G.C_QuestLog.GetLogIndexForQuestID = lua.eval("function(id) return 1 end")
+G.C_QuestLog.GetQuestObjectives = lua.eval("function(id) if id == 166 then return { { text = 'Giver slain: 3/8', finished = false }, { text = 'Odd Thing: 0/2', finished = false } } end end")
+lwin = frame_named("QuestThreadFrame")
+G.SlashCmdList["QUESTTHREAD"]("log")
+def log_rows():
+    rs = [f for f in G.stubs.values() if f._shown and f.name is not None and f.tag is not None and f._pt is not None and f.status is not None]
+    return sorted(rs, key=lambda f: -f._pt[5])
+lr = log_rows()
+check("/qthread log opens My Log, its tab lit", ns2.UI.IsLogMode() and lwin.tabLog.plate._shown and not lwin.tabChain.plate._shown and not lwin.tabZone.plate._shown, lwin.title._text)
+check("My Log is headed 'My quest log' and says how many are ready", lwin.title._text == "My quest log" and "3 quests in your log" in lwin.sub._text and "1 ready to turn in" in lwin.stats._text and "2 in progress" in lwin.stats._text, (lwin.sub._text, lwin.stats._text))
+check("the search box now filters the log", lwin.hint._text == "Filter your quest log")
+lheads = [r.name._text for r in lr if r.fold._shown]
+check("the game's own zone headers come first, in the game's order, a folded one with its note", lheads == ["|cffffd100Elwynn Forest|r", "|cffffd100Westfall|r", "|cffffd100Duskwood|r"] and any("Folded shut" in r.name._text for r in lr), lheads)
+lq = {r.questId: r for r in lr if r.entry is not None}
+check("a row per quest in the log", sorted(lq) == [5, 55, 166])
+check("a quest ready to turn in says so, with the done icon", "Ready to turn in" in lq[55].sub._text and abs(lq[55].status._tc[1] - 0) < 1e-9, (lq[55].sub._text, lq[55].status._tc))
+check("a quest in progress shows its first unfinished objective and how many more", "Giver slain: 3/8" in lq[166].sub._text and "+1 more" in lq[166].sub._text and abs(lq[166].status._tc[1] - 1 / 8) < 1e-9, lq[166].sub._text)
+check("a quest that is part of a chain has the chain-link icon", lq[166].chain._shown, lq[166].chain._shown)
+lq[166]._scripts["OnClick"](lq[166], "LeftButton")
+lpop = frame_named("QuestThreadObjectives")
+check("clicking a quest opens its details, staying in My Log", lpop is not None and lpop._shown and ns2.UI.IsLogMode())
+lpop.close._scripts["OnClick"](lpop.close)
+for part in list(lpop.itemRows.values()) + list(lpop.textRows.values()):  # (the stubs do not hide a hidden frame's children)
+    part._shown = False
+# filter
+lwin.box.SetText(lwin.box, "morbent")
+lwin.box._scripts["OnTextChanged"](lwin.box, True)
+lr = log_rows()
+check("typing filters the log by name and drops the headers with nothing left", [r.questId for r in lr if r.entry is not None] == [55] and [r.name._text for r in lr if r.fold._shown] == ["|cffffd100Elwynn Forest|r"], [r.name._text for r in lr])
+lwin.box.SetText(lwin.box, "zzz")
+lwin.box._scripts["OnTextChanged"](lwin.box, True)
+check("a filter matching nothing says so", any("No quest in your log matches" in r.name._text for r in log_rows()))
+lwin.box.SetText(lwin.box, "")
+lwin.box._scripts["OnTextChanged"](lwin.box, True)
+# fold a header
+lh = next(r for r in log_rows() if r.fold._shown and "Elwynn Forest" in r.name._text)
+lh._scripts["OnClick"](lh, "LeftButton")
+check("a zone header folds its quests away", not any(r.questId in (166, 55) for r in log_rows() if r.entry is not None) and any(r.questId == 5 for r in log_rows() if r.entry is not None))
+lh = next(r for r in log_rows() if r.fold._shown and "Elwynn Forest" in r.name._text)
+lh._scripts["OnClick"](lh, "LeftButton")
+# the log changing
+G.C_QuestLog.GetNumQuestLogEntries = lua.eval("function() return 3 end")
+lwin._scripts["OnEvent"](lwin, "QUEST_LOG_UPDATE")
+check("My Log follows the quest log (QUEST_LOG_UPDATE)", "2 quests in your log" in lwin.sub._text, lwin.sub._text)
+G.C_QuestLog.GetNumQuestLogEntries = lua.eval("function() return 0 end")
+lwin._scripts["OnEvent"](lwin, "QUEST_LOG_UPDATE")
+check("an empty quest log says so", any("Your quest log is empty" in r.name._text for r in log_rows()), [r.name._text for r in log_rows()])
+# leaving and coming back clears the filter
+lwin.box.SetText(lwin.box, "abc")
+lwin.box._scripts["OnTextChanged"](lwin.box, True)
+lwin.tabChain._scripts["OnClick"](lwin.tabChain)
+check("another tab: not in My Log any more, and the box is empty", not ns2.UI.IsLogMode() and lwin.box._text == "")
+lwin.tabLog._scripts["OnClick"](lwin.tabLog)
+check("the My Log tab opens it again", ns2.UI.IsLogMode() and lwin.hint._text == "Filter your quest log")
+G.C_QuestLog.GetNumQuestLogEntries = old_log["GetNumQuestLogEntries"]
+G.C_QuestLog.GetInfo = old_log["GetInfo"]
+G.C_QuestLog.GetLogIndexForQuestID = old_log["GetLogIndexForQuestID"]
+G.C_QuestLog.IsComplete = None
+G.C_QuestLog.GetQuestObjectives = None
+lwin.tabChain._scripts["OnClick"](lwin.tabChain)
+G.SlashCmdList["QUESTTHREAD"]("")
+
 # ---- where a quest's objectives happen ----
 def lookups():
     return lua.eval("""
@@ -1095,6 +1300,33 @@ check("a chain entry carries its lead-in quests, sorted, with their details",
 check("the lead-ins are not part of the chain's steps or count", cc.quests == 1 and cc.parts == 1)
 check("opened from a lead-in itself, the chain contains it and does not repeat it", Core.Chain(cidx, 11, cinfo).quests == 2
       and all(len(list(e.crumbs.values())) == 1 and list(e.crumbs.values())[0].id == 12 for e in Core.Chain(cidx, 11, cinfo).layers[2].values()))
+# the main line and the optional side quests of a chain: 1 -> 2 -> 4 is the main line, 3 hangs off 1 and leads nowhere
+oidx = Core.NewIndex()
+Core.AddQuest(oidx, 1, lua.table_from({}))
+Core.AddQuest(oidx, 2, lua.table_from({"pre": lua.table_from([1])}))
+Core.AddQuest(oidx, 3, lua.table_from({"pre": lua.table_from([1])}))
+Core.AddQuest(oidx, 4, lua.table_from({"pre": lua.table_from([2])}))
+oc = Core.Chain(oidx, 1, cinfo)
+olab = {e.id: (e.label, e.optional) for layer in oc.layers.values() for e in layer.values()}
+check("the main line is numbered 1, 2, 3 and a side quest is lettered after the quest it follows",
+      olab == {1: ("1", False), 2: ("2", False), 3: ("a", True), 4: ("3", False)}, olab)
+check("the chain counts its main and optional quests", oc.mainCount == 3 and oc.optionalCount == 1 and oc.quests == 4)
+Core.AddQuest(oidx, 5, lua.table_from({"pre": lua.table_from([1])}))
+oc2 = Core.Chain(oidx, 1, cinfo)
+olab2 = {e.id: e.label for layer in oc2.layers.values() for e in layer.values()}
+check("several side quests in a row are a, b, and the letters start again after the next main quest", olab2[3] == "a" and olab2[5] == "b" and olab2[4] == "3", olab2)
+# the graph layout: columns are the steps, main quests first in a column, optional ones below
+gl = Core.GraphLayout(oc2.layers, oidx.prevs)
+gpos = {i: (n.col, n.row) for i, n in ((k, gl.nodes[k]) for k in (1, 2, 3, 4, 5))}
+check("graph: a column per step, main quests on top and the side quests under them", gpos == {1: (0, 0), 2: (1, 0), 3: (1, 1), 5: (1, 2), 4: (2, 0)} and gl.cols == 3 and gl.rows == 3, gpos)
+check("graph: an edge from each prerequisite to the quest it unlocks", [(e["from"], e.to) for e in gl.edges.values()] == [(1, 2), (1, 3), (1, 5), (2, 4)], [(e["from"], e.to) for e in gl.edges.values()])
+gidx = Core.NewIndex()
+Core.AddQuest(gidx, 10, lua.table_from({}))
+Core.AddQuest(gidx, 11, lua.table_from({"pre": lua.table_from([10])}))  # a side quest with the smaller id
+Core.AddQuest(gidx, 12, lua.table_from({"pre": lua.table_from([10])}))
+Core.AddQuest(gidx, 13, lua.table_from({"pre": lua.table_from([12])}))
+gl2 = Core.GraphLayout(Core.Chain(gidx, 10, cinfo).layers, gidx.prevs)
+check("graph: the main quest is above the optional one in its column even when its id is higher", gl2.nodes[12].row == 0 and gl2.nodes[11].row == 1, (gl2.nodes[12].row, gl2.nodes[11].row))
 # WoW Forever's Skyborne races: ids 95 / 96 sit at mask bits 32 / 33, not at bit id - 1
 sky = 77 + 2 ** 32  # the four Alliance races of the old world plus Skyborne Alliance
 check("Skyborne Alliance (95) can take a quest whose mask has bit 32, Skyborne Horde (96) cannot",
@@ -1732,7 +1964,7 @@ G.SlashCmdList["QUESTTHREAD"]("zone elwynn")
 check("/qthread zone <name> opens the Zones tab on that zone", ns2.UI.IsZoneMode() and mainwin.title._text == "Elwynn Forest", mainwin.title._text)
 check("the Zones tab is the lit one", mainwin.tabZone.under._shown and not mainwin.tabChain.under._shown)
 check("the filter starts on Available, the box asks for a zone", G.QuestThreadDB.zone.filter == "available" and mainwin.hint._text == "Zone name")
-check("the views are pill tabs in the header, the lit one on a plate", mainwin.tabZone.plate._shown and not mainwin.tabChain.plate._shown and mainwin.tabZone._size[1] == 66 and mainwin.tabZone._size[2] == 24)
+check("the views are pill tabs in the header, the lit one on a plate", mainwin.tabZone.plate._shown and not mainwin.tabChain.plate._shown and mainwin.tabZone._size[1] == 54 and mainwin.tabZone._size[2] == 24 and not mainwin.tabLog.plate._shown)
 check("the search box leaves room for the three group tabs on the Zones tab", mainwin.box._w2 == 500 - 28 - 192 - 8, mainwin.box._w2)
 tz = Z.Model(12)
 evz = Z.Evaluate(tz)
@@ -1953,12 +2185,11 @@ G.WorldMapFrame = G.newStub()
 G.WorldMapFrame.GetMapID = lua.eval("function() return _G.testMapId end")
 G.QuestThreadDB.mapPanel = None
 G.QuestThreadDB.zone.filter = "available"
-check("there is no panel before the map button exists", not MP.IsShown() and frame_named("QuestThreadMapButton") is None)
+check("there is no panel before it is opened", not MP.IsShown())
 MP.Init()
-mbtn = frame_named("QuestThreadMapButton")
-check("the world map gets a QuestThread button", mbtn is not None and mbtn._scripts["OnClick"] is not None)
-mbtn._scripts["OnClick"](mbtn)
-check("its click opens the panel", MP.IsShown() and G.QuestThreadDB.mapPanel is True)
+check("the world map gets no QuestThread button (it floated over other addons' map frames)", frame_named("QuestThreadMapButton") is None)
+MP.Toggle()
+check("/qthread map opens the panel", MP.IsShown() and G.QuestThreadDB.mapPanel is True)
 mpanel = frame_named("QuestThreadMapPanel")
 check("the panel sits beside the map, at its top right", mpanel._pt[1] == "TOPLEFT" and G.rawequal(mpanel._pt[2], G.WorldMapFrame) and mpanel._pt[3] == "TOPRIGHT", mpanel._pt)
 

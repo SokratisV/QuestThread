@@ -1,11 +1,12 @@
-"""Draws Status.tga: the step-status icons side by side, 256x32 (eight 32x32 cells, five drawn), 32-bit TGA.
+"""Draws Status.tga: the step-status icons side by side, 256x32 (eight 32x32 cells, six drawn), 32-bit TGA.
 
   cell 0  done        green disc, check mark
   cell 1  in log      blue disc, question mark
   cell 2  available   gold disc, exclamation mark
   cell 3  locked      red disc, padlock
   cell 4  again       green disc, exclamation mark (a repeatable quest you have already completed once)
-  cells 5-7 are empty (the sheet is a power of two wide)
+  cell 5  badge       dark disc, amber ring (behind the letter of an optional quest)
+  cells 6-7 are empty (the sheet is a power of two wide)
 
   python -I tools/make-status-icons.py              writes Status.tga next to the addon's TOC
   python -I tools/make-status-icons.py preview.png  also writes a 4x PNG preview
@@ -30,8 +31,9 @@ STYLES = [
     ((178, 140, 20), (82, 62, 6), (255, 240, 170)),     # available
     ((150, 52, 52), (66, 22, 22), (255, 206, 206)),     # locked
     ((47, 128, 66), (20, 58, 30), (222, 250, 228)),     # again
+    ((27, 21, 14), (150, 110, 44), (224, 166, 74)),     # badge (a plain disc: the letter is text on top)
 ]
-GLYPHS = [0, 1, 2, 3, 2]  # the glyph drawn in each cell: check, ?, !, lock, !
+GLYPHS = [0, 1, 2, 3, 2, None]  # the glyph drawn in each cell: check, ?, !, lock, !, none
 
 
 def seg_d(px, py, a, b):
@@ -82,7 +84,7 @@ def sample(x, y):
         return None
     if d > R - 0.2:
         return edge
-    if glyph(GLYPHS[cell], px, py):
+    if GLYPHS[cell] is not None and glyph(GLYPHS[cell], px, py):
         return ink
     return fill
 
