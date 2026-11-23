@@ -226,9 +226,27 @@ end
 
 function Zones.HasArea(area) return starts[area] ~= nil end
 
+-- How far you are with a zone: { done, total, log, available } over the quests that start there and are for you.
+-- Remembered until your level or learned professions change, or Zones.ResetProgress (the list view asks for fresh
+-- numbers each time it opens).
+local progressCache = {}
+function Zones.Progress(area)
+  local who = Data.Who()
+  local key = who.key .. ":" .. (UnitLevel and UnitLevel("player") or 0)
+  local hit = progressCache[area]
+  if hit and hit.key == key then return hit end
+  local t = Zones.Evaluate(Zones.Model(area)).totals
+  hit = { key = key, done = t.done, total = t.quests, log = t.log, available = t.available }
+  progressCache[area] = hit
+  return hit
+end
+
+function Zones.ResetProgress() progressCache = {} end
+
 -- Forgets the built models (for a change of character, or the tests).
 function Zones.Reset()
   models, infos, listCache = {}, {}, nil
+  progressCache = {}
 end
 
 -- ---- the model of one area ----

@@ -1788,7 +1788,7 @@ check("opening the Zones tab shows the area you are standing in, not the one you
 ns2.UI.Toggle(); ns2.UI.ShowZones(other_area)
 check("opening it on a given area keeps that area", mainwin.title._text == ns2.Data.ZoneName(other_area), mainwin.title._text)
 ns2.UI.ShowChains(); ns2.UI.ShowZones()
-check("a click on the Zones tab while the window is open does not jump to your area", mainwin.title._text == ns2.Data.ZoneName(other_area), mainwin.title._text)
+check("a click on the Zones tab while the window is open shows the list of zones (not your area)", mainwin.title._text == "Zones" and ns2.UI.IsZoneMode(), mainwin.title._text)
 # Zones is the tab it opens on, even when it was left on Chains, and on the area you are in even when it was left elsewhere
 ns2.UI.ShowZones(other_area)
 ns2.UI.ShowChains()
@@ -1811,9 +1811,54 @@ chain_row_z.chain._scripts["OnEnter"](chain_row_z.chain)
 check("hovering the row's chain icon says what it does", "Open this quest's chain" in list(G.tipLines.values()), list(G.tipLines.values()))
 chain_row_z.chain._scripts["OnClick"](chain_row_z.chain)
 check("the row's chain icon opens that quest's chain, with its details", not ns2.UI.IsZoneMode() and mainwin.title._text == ns2.Data.Name(entry65) and popup()._shown, mainwin.title._text)
-# back to the zone, group by giver
+# the Zones tab: the list of all zones, by continent, with progress
+def pump(n=60):
+    for _ in range(n):
+        for f in list(G.stubs.values()):
+            fn = f._scripts["OnUpdate"]
+            if fn is not None:
+                try:
+                    fn(f, 0.016)
+                except Exception:
+                    pass
+
+G.C_Map.GetMapInfo = lua.eval("function(m) if m == 1429 then return { name = 'Elwynn Forest', mapType = 3, parentMapID = 1415 } elseif m == 1415 then return { name = 'Eastern Kingdoms', mapType = 2, parentMapID = 947 } end return { name = 'Elwynn Forest' } end")
 mainwin.tabZone._scripts["OnClick"](mainwin.tabZone)
-check("the Zones tab remembers the zone", ns2.UI.IsZoneMode() and mainwin.title._text == "Elwynn Forest")
+irows = zone_rows()
+ihead = [r for r in irows if r.fold._shown]
+check("the Zones tab lists every zone, split by continent: Eastern Kingdoms first, Other last",
+      mainwin.title._text == "Zones" and [r.name._text for r in ihead] == ["|cffffd100Eastern Kingdoms|r", "|cffffd100Other|r"], [r.name._text for r in ihead])
+check("the list has no Back button and no chips", not mainwin.back._shown and not any(f._shown and f.key is not None and f.label is not None for f in G.stubs.values()))
+elw = next(r for r in irows if "Elwynn Forest" in r.name._text and not r.fold._shown)
+check("Elwynn Forest is under Eastern Kingdoms, marked as where you are", ihead[0]._pt[5] > elw._pt[5] > -10 ** 6 and elw._pt[5] > ihead[1]._pt[5] and "you are here" in elw.name._text, (ihead[0]._pt, elw._pt, ihead[1]._pt))
+check("the zones' numbers are worked out after the list is up: a placeholder first", "…" in elw.xp._text, elw.xp._text)
+pump()
+prog = Z.Progress(12)
+check("every zone row gets its progress, as 'done / total', with a bar",
+      elw.xp._text.endswith("%d / %d|r" % (prog.done, prog.total)) and elw.meter._shown, (elw.xp._text, dict(prog)))
+check("a zone with nothing done shows a grey count and no fill", ("|cff9a9488" in elw.xp._text) == (prog.done == 0) and elw.meterFill._shown == (prog.done > 0))
+check("the continent header shows its own total", ihead[0].xp._text.endswith("%d / %d|r" % (prog.done, prog.total)), ihead[0].xp._text)
+check("the stats line and the bar give the overall progress", "quests done" in mainwin.stats._text and mainwin.prog._shown, mainwin.stats._text)
+# a continent folds shut
+ihead[0]._scripts["OnClick"](ihead[0], "LeftButton")
+check("clicking a continent folds its zones away", not any("Elwynn Forest" in r.name._text for r in zone_rows() if not r.fold._shown))
+ihead = [r for r in zone_rows() if r.fold._shown]
+ihead[0]._scripts["OnClick"](ihead[0], "LeftButton")
+check("... and opens them again", any("Elwynn Forest" in r.name._text for r in zone_rows() if not r.fold._shown))
+# a click on a zone opens it, as when it is searched for; the way back is the All zones button
+elw = next(r for r in zone_rows() if "Elwynn Forest" in r.name._text and not r.fold._shown)
+elw._scripts["OnClick"](elw, "LeftButton")
+check("clicking a zone opens it like a search does", mainwin.title._text == "Elwynn Forest" and any(c.key == "available" for c in chips()))
+check("the zone view has an All zones button back", mainwin.back._shown and mainwin.back.text._text == "All zones", mainwin.back.text._text)
+mainwin.back._scripts["OnClick"](mainwin.back)
+check("All zones goes back to the list", mainwin.title._text == "Zones" and not mainwin.back._shown)
+ns2.UI.OpenZoneText("elwynn")
+check("searching for a zone still opens it (from the list too)", mainwin.title._text == "Elwynn Forest" and mainwin.back._shown)
+mainwin.tabZone._scripts["OnClick"](mainwin.tabZone)
+check("a click on the Zones tab from a zone goes to the list", mainwin.title._text == "Zones")
+G.C_Map.GetMapInfo = lua.eval("function() return { name = 'Elwynn Forest' } end")
+ns2.UI.ShowZones(12)
+check("(setup) back on Elwynn Forest", mainwin.title._text == "Elwynn Forest")
 check("by type is lit at first, by giver dim", mainwin.tabType.under._shown and not mainwin.tabGiver.under._shown and mainwin.tabGiver.text._color[1] < 0.7 and mainwin.tabType.text._color[1] == 1)
 mainwin.tabGiver._scripts["OnClick"](mainwin.tabGiver)
 check("By giver lights up (underline, bright) and By type dims", mainwin.tabGiver.under._shown and not mainwin.tabType.under._shown and mainwin.tabType.text._color[1] < 0.7 and mainwin.tabGiver.text._color[1] == 1)

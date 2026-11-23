@@ -83,8 +83,13 @@ tabs, the search box with its magnifier, the quest or zone you are looking at wi
   follows the quest you click, closes with its X, and does not open when you open a quest some other way.
 
 ## Zones (version 1.1)
-The **Zones** tab, next to **Chains** under the title, lists every quest that **starts** in a zone, whatever
-chain it belongs to. A quest also counts for the zone your quest log files it under, so a quest you hold always
+Clicking the **Zones** tab shows the **list of all zones**, split by continent (each continent folds shut), with how
+far you are in each: "done / total" quests that start there, and a thin bar (green once every quest is done). Your
+own zone is marked "you are here". Click a zone to open it; the **All zones** button in the zone view (or another
+click on the Zones tab) goes back to the list. The window itself opens on the zone you are standing in, not on
+the list. The numbers are worked out a few zones at a time, so they fill in over a moment.
+
+Inside a zone, the tab lists every quest that **starts** in it, whatever chain it belongs to. A quest also counts for the zone your quest log files it under, so a quest you hold always
 shows under its own zone's **In log** chip, even when its giver stands in another zone or has no known spawn. Pick a zone by typing its name, or open it from a zone link (**Ctrl+click** a blue zone
 name) or with `/qthread zone <name>`; with no name it shows the zone you are standing in.
 - **Filter chips:** **Available**, **In log**, **Missed**, **Done**, **All** (the counts are in the line under the

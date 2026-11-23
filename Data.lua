@@ -287,6 +287,29 @@ function Data.AreaOfUiMap(uiMap)
   return a
 end
 
+-- The continent an area lies on ("Eastern Kingdoms", "Kalimdor"...), from its map's parents, or nil when it has no map
+-- or the game does not say.
+local continentCache = {}
+function Data.ContinentOf(area)
+  local hit = continentCache[area]
+  if hit ~= nil then return hit or nil end
+  local name = false
+  local m = Data.UiMap(area)
+  local continent = (Enum and Enum.UIMapType and Enum.UIMapType.Continent) or 2
+  for _ = 1, 8 do
+    if type(m) ~= "number" or m <= 0 or not (C_Map and C_Map.GetMapInfo) then break end
+    local ok, info = pcall(C_Map.GetMapInfo, m)
+    if not ok or type(info) ~= "table" then break end
+    if info.mapType == continent then
+      if type(info.name) == "string" and info.name ~= "" then name = info.name end
+      break
+    end
+    m = info.parentMapID
+  end
+  if name then continentCache[area] = name end -- (names may load later: only a found one is remembered)
+  return name or nil
+end
+
 -- The area's own name first (works for any area id), then the name of the map it belongs to.
 local zoneNames = {}
 function Data.ZoneName(area, uiMap)

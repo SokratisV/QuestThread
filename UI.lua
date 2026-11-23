@@ -50,6 +50,8 @@ local rows, iconPool = {}, {}
 local current, notice, results, backTo
 local zoneMode, zonePick, zoneNotice, lastZoneShown -- the Zones tab
 local wantHere -- the window was just opened: the Zones tab should show the area you are standing in
+local zoneIndex -- the Zones tab shows the list of all zones (instead of one zone)
+local indexJob -- the list's progress numbers being worked out a few zones per frame
 local collapsed = {} -- [area:giver] or [area:section:name] = true for a giver / section folded shut
 local PLUS_ICON, MINUS_ICON = "Interface\\Buttons\\UI-PlusButton-Up", "Interface\\Buttons\\UI-MinusButton-Up"
 local Render -- defined below; the row click handlers need it
@@ -626,6 +628,15 @@ local function GetRow(i)
   row.line:SetPoint("TOPLEFT"); row.line:SetPoint("TOPRIGHT"); row.line:SetHeight(1)
   row.num = Text(row, "GameFontNormalSmall", "RIGHT")
   row.num:SetPoint("TOPLEFT", 2, -6); row.num:SetWidth(18)
+  -- a zone row in the list of zones: a thin progress bar at its right
+  row.meter = Solid(row, "ARTWORK", BRONZE_MUTED[1], BRONZE_MUTED[2], BRONZE_MUTED[3], 0.3)
+  row.meter:SetSize(90, 6)
+  row.meter:SetPoint("RIGHT", row, "RIGHT", -10, 0)
+  row.meter:Hide()
+  row.meterFill = Solid(row, "OVERLAY", 0.85, 0.65, 0.15, 1)
+  row.meterFill:SetPoint("LEFT", row.meter, "LEFT", 0, 0)
+  row.meterFill:SetHeight(6)
+  row.meterFill:Hide()
   -- a section header's fold icon: minus while it is open, plus while it is folded shut
   row.fold = row:CreateTexture(nil, "ARTWORK")
   row.fold:SetSize(14, 14)
@@ -774,7 +785,7 @@ local function PlaceRow(n, y, h)
   row.onClick = nil; row.status:SetDesaturated(false)
   row.tag:SetText(""); row.tag:Hide(); row.tag:ClearAllPoints(); row.tag:SetPoint("TOPRIGHT", -2, -6)
   row.status:Hide(); row.sub:SetText(""); row.sub:Hide(); row.where:SetText(""); row.where:Hide()
-  row.chain:Hide(); row.fold:Hide()
+  row.chain:Hide(); row.fold:Hide(); row.meter:Hide(); row.meterFill:Hide()
   -- Rows are reused: the summary and result rows move the name, and a lead-in row indents everything.
   row.name:ClearAllPoints(); row.name:SetPoint("TOPLEFT", 46, -5); row.name:SetWidth(CONTENT_W - 46 - 84)
   row.status:ClearAllPoints(); row.status:SetPoint("TOPLEFT", 24, -5)
@@ -1152,9 +1163,148 @@ local function ZoneRowClick(self, button)
   end
 end
 
+-- ---- the Zones tab's list of all zones, by continent, with how far you are in each ----
+local METER_W = 90
+
+-- One zone row's numbers: "done / total" and the bar (green when every quest there is done).
+local function FillZoneRow(row, p)
+  if not p then
+    row.xp:SetText("|cff808080…|r")
+    row.meter:Show(); row.meterFill:Hide()
+    return
+  end
+  local complete = p.total > 0 and p.done >= p.total
+  local color = complete and "|cff66cc66" or (p.done == 0 and "|cff9a9488" or "|cffffffff")
+  row.xp:SetText(color .. p.done .. " / " .. p.total .. "|r")
+  row.meter:Show()
+  local w = p.total > 0 and math.floor(METER_W * p.done / p.total + 0.5) or 0
+  if p.done > 0 then w = math.max(1, w) end -- a little done always shows
+  if w > 0 then
+    row.meterFill:SetWidth(w)
+    if complete then row.meterFill:SetVertexColor(0.2, 0.58, 0.3, 1) else row.meterFill:SetVertexColor(0.85, 0.65, 0.15, 1) end
+    row.meterFill:Show()
+  else
+    row.meterFill:Hide()
+  end
+end
+
+-- Works the zones' numbers out a few at a time (each one builds that zone's list), filling the rows as they come.
+local indexDriver
+local function IndexStep()
+  local job = indexJob
+  if not job then
+    if indexDriver then indexDriver:SetScript("OnUpdate", nil) end
+    return
+  end
+  local t0 = debugprofilestop and debugprofilestop() or nil
+  local count = 0
+  while job.pos <= #job.queue do
+    local z = job.queue[job.pos]
+    job.pos = job.pos + 1
+    local p = Zones.Progress(z.area)
+    FillZoneRow(job.rows[z.area], p)
+    local g = job.groupOf[z.area]
+    g.done, g.total, g.n = g.done + p.done, g.total + p.total, g.n + 1
+    job.done, job.total = job.done + p.done, job.total + p.total
+    if g.n == #g.zones then g.row.xp:SetText("|cff9aa0a8" .. g.done .. " / " .. g.total .. "|r") end
+    count = count + 1
+    if t0 then
+      if debugprofilestop() - t0 > 8 then break end
+    elseif count >= 3 then
+      break
+    end
+  end
+  if job.pos > #job.queue then
+    frame.stats:SetText(("%d of %d quests done"):format(job.done, job.total))
+    indexJob = nil
+    if indexDriver then indexDriver:SetScript("OnUpdate", nil) end
+  else
+    frame.stats:SetText(("Counting… %d of %d zones"):format(job.pos - 1, #job.queue))
+  end
+  SetProgress(job.done, 0, 0, job.total)
+end
+
+local function RenderZoneIndex()
+  local list = Zones.List()
+  local groups, order, groupOf = {}, {}, {}
+  for _, z in ipairs(list) do
+    local name = Data.ContinentOf(z.area) or "Other"
+    local g = groups[name]
+    if not g then
+      g = { name = name, zones = {}, done = 0, total = 0, n = 0 }
+      groups[name] = g
+      order[#order + 1] = g
+    end
+    g.zones[#g.zones + 1] = z
+    groupOf[z.area] = g
+  end
+  table.sort(order, function(a, b)
+    if (a.name == "Other") ~= (b.name == "Other") then return b.name == "Other" end
+    return a.name < b.name
+  end)
+  local here = Zones.CurrentArea()
+  frame.title:SetText("Zones")
+  frame.sub:SetText(("%d zones with quests"):format(#list) .. (here and (" · you are in " .. Data.ZoneName(here)) or ""))
+  frame.stats:SetText("")
+  SetProgress()
+
+  local y, n = 0, 0
+  local function nextRow(h)
+    n = n + 1
+    local row = PlaceRow(n, y, h)
+    y = y + h
+    row.tag:ClearAllPoints(); row.tag:SetPoint("TOPRIGHT", -8, -6)
+    row.xp:ClearAllPoints(); row.xp:SetPoint("TOPRIGHT", -8, -6)
+    return row
+  end
+  local jobRows, queue = {}, {}
+  for _, g in ipairs(order) do
+    local fk = "continent:" .. g.name
+    local open = not collapsed[fk]
+    local head = nextRow(28)
+    g.row = head
+    head.hl:SetVertexColor(BRONZE[1], BRONZE[2], BRONZE[3], 0.16); head.hl:Show()
+    head.fold:SetTexture(open and MINUS_ICON or PLUS_ICON); head.fold:Show()
+    head.name:ClearAllPoints(); head.name:SetPoint("TOPLEFT", 28, -7); head.name:SetWidth(CONTENT_W - 150)
+    head.name:SetText("|cffffd100" .. g.name .. "|r")
+    head.xp:SetText("|cff9aa0a8" .. #g.zones .. " zones|r")
+    head.onClick = function() collapsed[fk] = open or nil; Render() end
+    for _, z in ipairs(g.zones) do
+      queue[#queue + 1] = z
+      if open then
+        local row = nextRow(26)
+        jobRows[z.area] = row
+        row.name:ClearAllPoints(); row.name:SetPoint("TOPLEFT", 30, -6); row.name:SetWidth(CONTENT_W - 30 - 190)
+        row.name:SetText((z.area == here and "|cffffd100" or "|cffffffff") .. z.name .. "|r" .. (z.area == here and "  |cff9a9488you are here|r" or ""))
+        row.xp:ClearAllPoints(); row.xp:SetPoint("TOPRIGHT", -108, -7); row.xp:SetWidth(70)
+        row.onClick = function()
+          ZS().area = z.area
+          zoneIndex, zonePick, zoneNotice, popupFor = false, nil, nil, nil
+          Render()
+        end
+        FillZoneRow(row, nil)
+      end
+    end
+  end
+  -- folded continents still count (their header's numbers), but have no rows to fill
+  local noop = setmetatable({}, { __index = function() return function() end end })
+  local dummy = { xp = noop, meter = noop, meterFill = noop }
+  for _, z in ipairs(queue) do jobRows[z.area] = jobRows[z.area] or dummy end
+  Zones.ResetProgress()
+  indexJob = { queue = queue, pos = 1, rows = jobRows, groupOf = groupOf, done = 0, total = 0 }
+  indexDriver = indexDriver or CreateFrame("Frame")
+  indexDriver:SetScript("OnUpdate", IndexStep)
+
+  content:SetHeight(math.max(y, 1))
+  if lastZoneShown ~= "index" then scroll:SetVerticalScroll(0); lastZoneShown = "index" end
+  UpdateThumb()
+end
+
 local function RenderZone()
   Zones = Zones or ns.Zones
-  frame.back:Hide()
+  frame.back:SetShown(not zoneIndex)
+  frame.back.text:SetText("All zones")
+  frame.back:SetWidth(76)
   frame.toggle:Show()
   SyncGroupTabs()
   if Data.state == "error" or Zones.state == "error" then
@@ -1202,6 +1352,13 @@ local function RenderZone()
     if popupFor then ShowObjectives(popupFor) end
   end
 
+  if wantHere then -- the window was just opened: the area you are in, not the list
+    wantHere = false
+    local here = Zones.CurrentArea()
+    if here then ZS().area = here; zoneIndex = false else zoneIndex = true end
+  end
+  if zoneIndex and not zonePick then return RenderZoneIndex() end
+
   if zonePick then
     frame.title:SetText("Zones")
     frame.sub:SetText(zoneNotice or "Pick a zone.")
@@ -1213,11 +1370,6 @@ local function RenderZone()
     return finish(nil)
   end
 
-  if wantHere then -- the window was just opened: the area you are in, not the one you left it on
-    wantHere = false
-    local here = Zones.CurrentArea()
-    if here then ZS().area = here end
-  end
   local area = ZS().area
   if not area then
     area = Zones.CurrentArea()
@@ -1406,6 +1558,9 @@ end
 function Render()
   if not frame then return end
   frame.back:SetShown(current ~= nil and backTo ~= nil)
+  frame.back.text:SetText("Back")
+  frame.back:SetWidth(52)
+  indexJob = nil
   SetProgress()
   if popup then popup:Hide(); FitWidth() end -- shown again at the end of a full chain render
   for _, row in ipairs(rows) do row:Hide(); row.here:Hide(); HideLinks(row); ReleaseIcons(row) end
@@ -1764,6 +1919,11 @@ local function Create()
   local back = Button(f, "Back", 52, 24)
   back:SetPoint("RIGHT", f.tabChain, "LEFT", -8, 0)
   back:SetScript("OnClick", function()
+    if zoneMode then -- in a zone: back to the list of zones
+      zoneIndex, zonePick, zoneNotice, popupFor = true, nil, nil, nil
+      Render()
+      return
+    end
     if not backTo then return end
     current, results, notice = nil, backTo.results, backTo.notice
     backTo = nil
@@ -2088,7 +2248,13 @@ function UI.ShowZones(area)
   Zones = Zones or ns.Zones
   local fresh = not frame:IsShown()
   zoneMode, zonePick, zoneNotice, popupFor = true, nil, nil, nil
-  if area then ZS().area = area elseif fresh then wantHere = true end
+  if area then
+    ZS().area, zoneIndex = area, false
+  elseif fresh then
+    wantHere = true -- the area you are in
+  else
+    zoneIndex = true -- a click on the Zones tab: the list of all zones
+  end
   SetModeControls()
   frame:Show()
   frame:Raise()
@@ -2102,7 +2268,7 @@ function UI.OpenZoneText(text)
   Create()
   Zones = Zones or ns.Zones
   text = tostring(text or ""):match("^%s*(.-)%s*$")
-  zoneMode, popupFor = true, nil
+  zoneMode, zoneIndex, popupFor = true, false, nil
   SetModeControls()
   frame:Show()
   frame:Raise()
