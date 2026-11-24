@@ -6,7 +6,7 @@ local Core, Data = ns.Core, ns.Data
 local MP = {}
 ns.MapPanel = MP
 
-local PANEL_W, ROW_H = 300, 22
+local PANEL_W, ROW_H = 330, 24
 local STATUS_TEX = "Interface\\AddOns\\QuestThread\\Status.tga"
 local STATUS_COLOR = { done = "|cffa8c8ac", log = "|cff8fc4ff", available = "|cffffffff", locked = "|cffb4b4b4", missed = "|cff9a9488" }
 local STATUS_TEXT = {

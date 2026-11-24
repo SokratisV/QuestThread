@@ -12,6 +12,8 @@ Built for **WoW Forever** (client interface 16001).
   app installs it for you if you install QuestieDB or Questie). Questie itself is optional, but needed for
   the map-icon shortcut below.
 
+Every text in the window is one step bigger than the game's own font it is made from.
+
 ## Opening the chain
 - **Quest log:** every quest in the list has a small round chain-link button next to its tracking checkbox
   (or next to its "(Dungeon)" tag).
@@ -46,14 +48,14 @@ tabs, the search box with its magnifier, the quest or zone you are looking at wi
   follows; the rail runs through a group of side quests and ends at the last one. A locked quest names what it needs
   with that number ("Finish one of: Blight No More (1), Blight No More (3)"), and the header says how many are main
   and how many optional. Each quest shows its level and a status icon:
-  a green check (done), a blue "?" (in your log), a gold "!" (available now) or a red lock (locked). Locked quests say what they need on a second line, and your own quest is highlighted and marked "You are here".
+  a green check (done), a blue "?" (in your log), a gold "!" (available now) or a red lock (locked). Locked quests say what they need on a second line, and the quest you opened is highlighted. "You are here" marks the quest you have in your quest log, wherever you click in the chain.
 - Under each step, in blue, **where it happens**: the zones where its kill targets, objects and item drops
   are found (or where it is handed in, if it has no such objective). The tooltip spells it out per objective,
   for example "Kill Mosshoof Courser, Dustwallow Marsh" or "Collect Soothing Spices (from Jarl, ...)".
 - **Hover a step** for its objective, what locks it (a level or the quests you still need), and who starts
   and ends it with the zone and coordinates.
-- **Click "You are here"** (under the quest you opened) to open your quest log with that quest selected. It works for
-  quests that are in your log; out of combat only.
+- **Click "You are here"** (under the quest that is in your quest log) to open your quest log with that quest
+  selected; out of combat only. A chain with nothing in your log has none.
 - **Places are links.** The blue line under a quest lists its zones, and each zone name is clickable: it opens the
   world map on that area (the same line sits in the objectives popup under "Where"). When the optional
   **DungeonJournal** addon is installed and lists the quest, the line starts with an amber "Dungeon: <name>" that
@@ -80,12 +82,13 @@ tabs, the search box with its magnifier, the quest or zone you are looking at wi
   into, and is not counted in the step numbers, XP or reward totals. Only what QuestieDB lists as a breadcrumb
   is shown, and one meant for another race, class or faction is left out (the two factions often have their own lead-in to the same quest). Every breadcrumb quest carries a small **bread icon** before its name (in the chain, in lists of
   results, in tooltips and in the objectives popup).
-- **Details pane:** **left-click a quest** and the window grows a pane on its right (it slides left if the screen has
-  no room) with what to do: the quest's objective text, each creature to kill, object to use or item to
+- **Details pane:** the pane on the right of the window is always there (so the window never changes size) and says
+  "Select a quest..." until you **left-click a quest**; then it fills with what to do: the quest's objective text, each creature to kill, object to use or item to
   collect with where it is (and what drops the item; an item shows its icon, and **hovering it shows the item's own game tooltip**), the quest's **rewards** (XP, reputation, and every reward item with its icon and the same hover tooltip), and where the quest starts and is handed in. When the quest
   is in your quest log it also shows **your progress with the game's own counts** ("Boar slain: 3/8"): QuestieDB
-  says what to kill and collect but not how many, so the numbers can only come from the quest log. The panel
-  follows the quest you click, closes with its X, and does not open when you open a quest some other way.
+  says what to kill and collect but not how many, so the numbers can only come from the quest log. The pane
+  follows the quest you click; click the selected quest again to empty it. It starts empty when you open a quest some
+  other way. (The window slides left if it would run off the screen.)
 
 - **List | Graph** (the two tabs right of the search box): the Graph view draws the chain as **columns** (one per step)
   of boxes joined by **lines** from each quest to what it unlocks, main quests on top and optional ones under them.

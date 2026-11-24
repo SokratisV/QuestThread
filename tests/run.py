@@ -177,6 +177,8 @@ function(quests, items)
     function m.CreateTexture() return stub() end
     function m.CreateLine() return stub() end
     function m.SetThickness(s, v) s._thick = v end
+    function m.GetFont(s) return "Fonts\Test.ttf", 12, "" end
+    function m.SetFont(s, file, size, flags) s._font = { file, size, flags } end
     function m.SetStartPoint(s, p, rel, x, y) s._start = { x, y } end
     function m.SetEndPoint(s, p, rel, x, y) s._end = { x, y } end
     function m.SetColorTexture(s, r, g, b, a) s._vc = { r, g, b, a } end
@@ -358,6 +360,7 @@ check("window title is the quest name", any(t == "The Defias Brotherhood" for t 
 win0 = next(f for f in G.stubs.values() if f._name == "QuestThreadFrame")
 check("the brand row has the chain-link badge and the name, and a version field", win0.brand._text == "QuestThread" and "Chain.tga" in win0.logo._tex and win0.version is not None)
 check("the group tabs have their full names", win0.tabCrumbs.text._text == "Breadcrumbs" and win0.tabGiver.text._text == "By giver" and win0.tabType.text._text == "By type")
+check("every text in the window is one step (2 points) bigger than its game font", win0.brand._font is not None and win0.brand._font[2] == 14 and win0.tabZone.text._font[2] == 14 and win0.hint._font[2] == 14 and win0.box._font[2] == 14, (win0.brand._font, win0.hint._font))
 check("the views are labelled Chains, Zones and My Log", win0.tabChain.text._text == "Chains" and win0.tabZone.text._text == "Zones" and win0.tabLog.text._text == "My Log")
 check("the graph view says how to scroll sideways and zoom", "Ctrl+scroll: zoom" in win0.gzoom.hint._text and "Alt+scroll: sideways" in win0.gzoom.hint._text and win0.gzoom.hint is not None, win0.gzoom.hint._text)
 check("stats line shows 8 quests", any("8 quests" in t for t in texts), [t for t in texts if "quests" in t])
@@ -629,7 +632,7 @@ plain = [f for f in with_entry if f.entry.status != "locked" and f.entry.id != 1
 check("other rows have no second line", all(not f.sub._shown for f in plain))
 import math
 check("row height follows its second line and reward icons",
-      all(abs(f._h - (28 + (12 if f.sub._shown else 0) + (12 if f.where._shown else 0) + (math.ceil(len(f.entry["items"]) / 14) * 25 if len(f.entry["items"]) else 0))) < 0.001 for f in with_entry))
+      all(abs(f._h - (30 + (14 if f.sub._shown else 0) + (14 if f.where._shown else 0) + (math.ceil(len(f.entry["items"]) / 14) * 25 if len(f.entry["items"]) else 0))) < 0.001 for f in with_entry))
 check("rows no longer print status words in the name", not any(w in (f.name._text or "") for f in with_entry for w in ("done", "locked", "in log", "available")))
 check("rows show the quest level", any("[30]" in (f._text or "") for f in G.stubs.values()))
 G.tipLines = lua.table()
@@ -980,15 +983,15 @@ gwin = frame_named("QuestThreadFrame")
 G.QuestThreadDB.chainView = "graph"
 G.SlashCmdList["QUESTTHREAD"]("96077")
 check("the chain view has a List | Graph toggle, Graph lit", gwin.viewToggle._shown and gwin.tabGraph.plate._shown and not gwin.tabList.plate._shown)
-check("the search box makes room for it", gwin.box._w2 > 0 and gwin.box._w2 == gwin._w2 - 28 - 126 - 8, (gwin.box._w2, gwin._w2))
+check("the search box makes room for it", gwin.box._w2 > 0 and gwin.box._w2 == gwin._w2 - 310 - 28 - 137 - 8, (gwin.box._w2, gwin._w2))
 check("the graph replaces the list: the canvas is shown, the zoom buttons too", gwin.gscroll._shown and gwin.gzoom._shown and not gwin.scroll._shown)
 # the window grows to fit the chain, up to half the screen
-gneed = 2 * 18 + real_b_cols * 156 + (real_b_cols - 1) * 56 + 32
-check("on a 1920-wide screen the window grows towards the chain but stops at half the screen (960)", gwin._w2 == min(gneed, 960) == 960, (gwin._w2, gneed))
+gneed = 2 * 18 + real_b_cols * 176 + (real_b_cols - 1) * 56 + 32
+check("on a 1920-wide screen the window (column and pane) grows towards the chain but stops at half the screen (960)", gwin._w2 == min(gneed + 310, 960) == 960, (gwin._w2, gneed))
 gnodes_ = [f for f in G.stubs.values() if f._shown and f.cur is not None and f.meta is not None and f.questId is not None]
 check("a box for every quest of the chain", sorted(f.questId for f in gnodes_) == sorted(main_ids + opt_ids), (len(gnodes_), len(main_ids) + len(opt_ids)))
 glayout = Core.GraphLayout(real_b.layers, idx.prevs)
-bad = [(f.questId, f._pt[4], f._pt[5]) for f in gnodes_ if f._pt[4] != 18 + glayout.nodes[f.questId].col * 212 or f._pt[5] != -(18 + glayout.nodes[f.questId].row * 68)]
+bad = [(f.questId, f._pt[4], f._pt[5]) for f in gnodes_ if f._pt[4] != 18 + glayout.nodes[f.questId].col * 232 or f._pt[5] != -(18 + glayout.nodes[f.questId].row * 74)]
 check("each box sits in its column and row", not bad, bad[:3])
 glines_ = [f for f in G.stubs.values() if f._shown and f._start is not None and f._end is not None]
 check("every line is straight along an axis, and there are lines for every edge", len(glines_) >= len(glayout.edges) and all(f._start[1] == f._end[1] or f._start[2] == f._end[2] for f in glines_), (len(glines_), len(glayout.edges)))
@@ -1003,15 +1006,16 @@ gn._scripts["OnLeave"](gn)
 check("leaving puts the lines' colours back", not any(f._vc is not None and f._vc[1] == 1 and f._vc[2] == 0.86 for f in glines_))
 gn._scripts["OnClick"](gn, "LeftButton")
 gpop = frame_named("QuestThreadObjectives")
-check("clicking a box opens the details pane", gpop is not None and gpop._shown and gpop.title._text.find(gn.entry.name) >= 0)
+check("clicking a box fills the details pane", gpop is not None and gpop._shown and not gpop.empty and gpop.title._text.find(gn.entry.name) >= 0)
 check("the selected box has a bright ring and no other box does", gn.sel._shown and not any(f.sel._shown for f in gnodes_ if f is not gn), [f.questId for f in gnodes_ if f.sel._shown])
 sel_lines = [f for f in glines_ if f._vc is not None and f._vc[1] == 1 and f._vc[2] == 0.86]
 check("the selected box's lines stay lit gold, and a little thicker", len(sel_lines) > 0 and all(f._thick == 3 for f in sel_lines) and any(f._thick == 2 for f in glines_ if f not in sel_lines), len(sel_lines))
 gn2 = next(f for f in gnodes_ if f is not gn)
 gn2._scripts["OnClick"](gn2, "LeftButton")
 check("selecting another box moves the ring", gn2.sel._shown and not gn.sel._shown)
-gpop.close._scripts["OnClick"](gpop.close)
-check("closing the details takes the ring and the lit lines away", not any(f.sel._shown for f in gnodes_) and not any(f._vc is not None and f._vc[1] == 1 and f._vc[2] == 0.86 for f in glines_))
+gn2._scripts["OnClick"](gn2, "LeftButton")
+check("clicking the selected box again empties the pane (it keeps its width)", gpop.empty and gpop.hint._shown and gpop._shown, gpop.empty)
+check("... which takes the ring and the lit lines away", not any(f.sel._shown for f in gnodes_) and not any(f._vc is not None and f._vc[1] == 1 and f._vc[2] == 0.86 for f in glines_))
 zin = gwin.gzoom.inn
 z0 = gwin.gcanvas._scale
 zin._scripts["OnClick"](zin)
@@ -1040,13 +1044,13 @@ gwin.gzoom.fit._scripts["OnClick"](gwin.gzoom.fit)
 # on a 3840-wide screen it can show the whole chain, and on a small one it stays at its normal width
 G.UIParent.GetWidth = lua.eval("function() return 3840 end")
 gwin.tabGraph._scripts["OnClick"](gwin.tabGraph)
-check("on a 3840-wide screen the window grows to the chain's full width", gwin._w2 == gneed, (gwin._w2, gneed))
+check("on a 3840-wide screen the window grows to the chain's full width", gwin._w2 == gneed + 310, (gwin._w2, gneed))
 G.UIParent.GetWidth = lua.eval("function() return 800 end")
 gwin.tabGraph._scripts["OnClick"](gwin.tabGraph)
-check("on a small screen it never goes under its normal width", gwin._w2 == 500, gwin._w2)
+check("on a small screen it never goes under its normal width", gwin._w2 == 850, gwin._w2)
 G.UIParent.GetWidth = lua.eval("function() return 1920 end")
 gwin.tabList._scripts["OnClick"](gwin.tabList)
-check("the List tab goes back to normal width", gwin._w2 == 500, gwin._w2)
+check("the List tab goes back to the normal width", gwin._w2 == 850, gwin._w2)
 gwin.tabGraph._scripts["OnClick"](gwin.tabGraph)
 gwin.tabList._scripts["OnClick"](gwin.tabList)
 check("the List tab goes back to the list (and the choice is remembered)", gwin.scroll._shown and not gwin.gscroll._shown and not gwin.gzoom._shown and G.QuestThreadDB.chainView == "list" and gwin.tabList.plate._shown)
@@ -1087,10 +1091,12 @@ check("a row per quest in the log", sorted(lq) == [5, 55, 166])
 check("a quest ready to turn in says so, with the done icon", "Ready to turn in" in lq[55].sub._text and abs(lq[55].status._tc[1] - 0) < 1e-9, (lq[55].sub._text, lq[55].status._tc))
 check("a quest in progress shows its first unfinished objective and how many more", "Giver slain: 3/8" in lq[166].sub._text and "+1 more" in lq[166].sub._text and abs(lq[166].status._tc[1] - 1 / 8) < 1e-9, lq[166].sub._text)
 check("a quest that is part of a chain has the chain-link icon", lq[166].chain._shown, lq[166].chain._shown)
+check("each quest says where you hand it in, as in the Chains view", all(r.where._shown and r.where._text.find("Hand in: ") >= 0 for r in lq.values()), [r.where._text for r in lq.values()])
+check("the hand-in place is a link to that zone's map", any(b._shown and b.link.kind == "zone" for b in lq[166].links.values()), [(b.link.kind if b.link else None) for b in lq[166].links.values()])
 lq[166]._scripts["OnClick"](lq[166], "LeftButton")
 lpop = frame_named("QuestThreadObjectives")
-check("clicking a quest opens its details, staying in My Log", lpop is not None and lpop._shown and ns2.UI.IsLogMode())
-lpop.close._scripts["OnClick"](lpop.close)
+check("clicking a quest fills its details, staying in My Log", lpop is not None and lpop._shown and not lpop.empty and ns2.UI.IsLogMode())
+lq[166]._scripts["OnClick"](lq[166], "LeftButton")
 for part in list(lpop.itemRows.values()) + list(lpop.textRows.values()):  # (the stubs do not hide a hidden frame's children)
     part._shown = False
 # filter
@@ -1467,17 +1473,20 @@ def chain_row(qid):
     return next(f for f in G.stubs.values() if f._shown and f.questId == qid and f.entry is not None)
 
 G.SlashCmdList["QUESTTHREAD"]("166")
-check("opening a chain without clicking a quest shows no popup", popup() is None or not popup()._shown)
+def pane_open():
+    return popup() is not None and popup()._shown and not popup().empty
+
+check("opening a chain without clicking a quest leaves the pane empty, with a hint", popup() is not None and popup()._shown and popup().empty and popup().hint._shown and not popup().title._shown)
 row166 = chain_row(166)
 row166._scripts["OnClick"](row166, "RightButton")
-check("a right-click (waypoint) does not open the popup", popup() is None or not popup()._shown)
+check("a right-click (waypoint) does not fill the pane", not pane_open())
 row166._scripts["OnClick"](row166, "LeftButton")
 pop = popup()
-check("clicking a quest opens the popup", pop is not None and pop._shown)
+check("clicking a quest fills the pane", pop is not None and pane_open() and not pop.hint._shown and pop.title._shown)
 mainwin = frame_named("QuestThreadFrame")
 p1 = pop._pts[1]
-check("the details pane sits inside the window, at its right", p1[1] == "TOPLEFT" and G.rawequal(p1[2], mainwin) and p1[3] == "TOPLEFT" and p1[4] == 498 and p1[5] == -58, p1)
-check("opening the pane widens the window by the pane's width", mainwin._w2 == 790, mainwin._w2)
+check("the details pane sits inside the window, at its right", p1[1] == "TOPLEFT" and G.rawequal(p1[2], mainwin) and p1[3] == "TOPLEFT" and p1[4] == 538 and p1[5] == -58, p1)
+check("the window is the column plus the pane wide, filled or not", mainwin._w2 == 850, mainwin._w2)
 body = popup_text()
 check("the popup shows the quest's objective text", "Kill things." in body, body)
 check("the popup lists the creature to kill and the item to collect", "Kill Test Giver" in body and "Collect Odd Thing" in body, body)
@@ -1511,7 +1520,7 @@ check("the popup title is the quest name, the line under it has the level", "Giv
 G.testClientXp[166] = 500
 G.C_QuestLog.GetQuestObjectives = lua.eval("function(id) if id == 166 then return { { text = 'Giver slain: 3/8', finished = false }, { text = 'Odd Thing: 8/8', finished = true } } end end")
 row166 = chain_row(166)
-row166._scripts["OnClick"](row166, "LeftButton")
+ns2.UI.Open(166, True, True)  # (clicking the selected quest would let go of it)
 body = popup_text()
 check("a quest in your log shows its live counts", "Your progress" in body and "Giver slain: 3/8" in body and "Odd Thing: 8/8" in body, body)
 check("a finished objective is green, an unfinished one is not", "|cff66e066Odd Thing: 8/8" in body and "|cff66e066Giver slain" not in body, body)
@@ -1520,11 +1529,11 @@ xpline = [l for l in popup_text().split(chr(10)) if l.endswith(" XP|r")]
 check("a quest in your log shows the client's exact XP (no ~)", len(xpline) == 1 and "~" not in xpline[0] and "500 XP" in xpline[0], xpline)
 check("the popup says the quest is in your log", "In your quest log" in popup().sub._text, popup().sub._text)
 G.C_QuestLog.GetQuestObjectives = lua.eval("function(id) error('api blew up') end")
-row166._scripts["OnClick"](row166, "LeftButton")
-check("a failing quest-log API does not break the popup", popup()._shown and "Kill Test Giver" in popup_text())
+ns2.UI.Open(166, True, True)  # (clicking the selected quest would let go of it)
+check("a failing quest-log API does not break the popup", pane_open() and "Kill Test Giver" in popup_text())
 G.testClientXp[166] = None
-G.C_QuestLog.GetQuestObjectives = lua.eval("function(id) return { { text = 'Giver slain: 3/8', finished = false } } end")
-row166._scripts["OnClick"](row166, "LeftButton")
+G.C_QuestLog.GetQuestObjectives = lua.eval("function(id) return { { text = 'Giver slain: 3/8', finished = False } } end".replace("False", "false"))
+ns2.UI.Open(166, True, True)
 check("a quest that is not in your log shows no live counts even if the API answers",
       "Your progress" not in popup_text() and "3/8" not in popup_text(), popup_text())
 G.C_QuestLog.GetQuestObjectives = None
@@ -1536,12 +1545,12 @@ mainwin.GetLeft = lua.eval("function() return 1600 end")
 mainwin.GetTop = lua.eval("function() return 900 end")
 G.UIParent.GetRight = lua.eval("function() return 1920 end")
 mainwin._pt = None
-row166._scripts["OnClick"](row166, "LeftButton")
+ns2.UI.ShowChains()
 mp = mainwin._pt
 check("with no room on the right the window slides left by what hangs over", mp is not None and mp[1] == "TOPLEFT" and G.rawequal(mp[2], G.UIParent) and mp[3] == "BOTTOMLEFT" and mp[4] == 1420 and mp[5] == 900, mp)
 mainwin.GetRight = lua.eval("function() return 800 end")
 mainwin._pt = None
-row166._scripts["OnClick"](row166, "LeftButton")
+ns2.UI.ShowChains()
 check("with room on the right the window stays where it is", mainwin._pt is None, mainwin._pt)
 mainwin.GetRight = None
 mainwin.GetLeft = None
@@ -1558,22 +1567,23 @@ r2 = chain_row(2)
 r2._scripts["OnClick"](r2, "LeftButton")
 check("the popup shows the reputation reward", "Faction81 +100" in popup_text(), popup_text())
 # closing, re-opening, and picking from a list
-popup().close._scripts["OnClick"](popup().close)
-check("the popup's X closes it", not popup()._shown)
-check("... and the window gets its normal width back", mainwin._w2 == 500, mainwin._w2)
+check("(setup) the reputation quest's details are in the pane", pane_open())
+r2 = chain_row(2)
+r2._scripts["OnClick"](r2, "LeftButton")
+check("clicking the selected quest again empties the pane, which keeps its width", popup().empty and popup().hint._shown and popup()._shown and mainwin._w2 == 850, (popup().empty, mainwin._w2))
 mainwin.tabChain._scripts["OnClick"](mainwin.tabChain); mainwin.tabChain._scripts["OnClick"](mainwin.tabChain)  # two redraws of the chain
-check("after X the popup stays closed through a redraw", not popup()._shown)
+check("the pane stays empty through a redraw", popup().empty)
 ns2.UI.OpenIds(lua.table_from([166, 5]))
 pick166 = next(f for f in G.stubs.values() if f._shown and f.entry is None and f.questId == 166 and f.name is not None and "#" in (f.name._text or ""))
 pick166._scripts["OnClick"](pick166, "LeftButton")
-check("clicking a quest in a pick list opens its chain and the popup", popup()._shown and "Kill Test Giver" in popup_text())
+check("clicking a quest in a pick list opens its chain and fills the pane", pane_open() and "Kill Test Giver" in popup_text())
 G.SlashCmdList["QUESTTHREAD"]("166")
-check("opening a quest by other means closes the popup", not popup()._shown)
+check("opening a quest by other means empties the pane", popup().empty)
 row166 = chain_row(166)
 row166._scripts["OnClick"](row166, "LeftButton")
-check("(setup) the popup is open before the window is closed", popup()._shown)
+check("(setup) the pane is filled before the window is closed", pane_open())
 ns2.UI.Toggle(); ns2.UI.Toggle()  # close the window and open it again
-check("a popup left open when the window closes does not come back with it", mainwin._shown and not popup()._shown)
+check("a selection does not come back when the window is closed and opened", mainwin._shown and popup().empty)
 ns2.UI.ShowChains()
 
 # ---- "You are here" opens the quest log on that quest ----
@@ -1583,14 +1593,21 @@ def last_print():
 def here_buttons():
     return [f.here for f in G.stubs.values() if f.here is not None and f.here._shown]
 
+G.testClientXp[166] = 500  # 166 is the quest in your log
 G.SlashCmdList["QUESTTHREAD"]("166")
 cur = chain_row(166)
 hb = here_buttons()
-check("only the current quest's row has the clickable 'You are here'", len(hb) == 1 and G.rawequal(hb[0], cur.here), len(hb))
+check("only the quest in your quest log has the clickable 'You are here'", len(hb) == 1 and G.rawequal(hb[0], cur.here), len(hb))
+G.SlashCmdList["QUESTTHREAD"]("65")
+hb = here_buttons()
+check("'You are here' stays on the quest in your log when you open another quest of the chain", len(hb) == 1 and G.rawequal(hb[0], chain_row(166).here) and chain_row(65).sub._text.find("You are here") < 0, len(hb))
+G.SlashCmdList["QUESTTHREAD"]("166")
+cur = chain_row(166)
 G.openedLog = None
 G.QuestMapFrame_OpenToQuestDetails = lua.eval("function(id) _G.openedLog = id end")
+G.testClientXp[166] = None  # (it has left the log since the window was drawn)
 cur.here._scripts["OnClick"](cur.here)
-check("clicking it for a quest that is not in your log says so and opens nothing", G.openedLog is None and "isn't in your quest log" in last_print(), last_print())
+check("clicking it for a quest that is no longer in your log says so and opens nothing", G.openedLog is None and "isn't in your quest log" in last_print(), last_print())
 G.testClientXp[166] = 500  # now in the log
 cur.here._scripts["OnClick"](cur.here)
 check("clicking it opens the quest log on that quest", G.openedLog == 166, G.openedLog)
@@ -1616,8 +1633,14 @@ check("hovering lights up the words and says what a click does", "|cffffffffYou 
 cur.here._scripts["OnLeave"](cur.here)
 check("leaving puts the colour back", cur.sub._text == lit_before and "|cffffd100You are here" in cur.sub._text, cur.sub._text)
 G.testClientXp[166] = None
+G.testClientXp[5] = 300
 G.SlashCmdList["QUESTTHREAD"]("5")
-check("another chain: the button belongs to the new current quest only", len(here_buttons()) == 1 and G.rawequal(here_buttons()[0], chain_row(5).here))
+check("another chain: the button belongs to the quest of that chain that is in your log only", len(here_buttons()) == 1 and G.rawequal(here_buttons()[0], chain_row(5).here))
+G.testClientXp[5] = None
+G.testClientXp[166] = 500
+G.SlashCmdList["QUESTTHREAD"]("5")
+check("a chain with nothing in your log has no 'You are here' at all", len(here_buttons()) == 0)
+G.testClientXp[166] = None
 G.SlashCmdList["QUESTTHREAD"]("")
 
 # ---- the zone index and models ----
@@ -1928,7 +1951,7 @@ G.ForeverDungeonJournal_NS = fdj_keep
 # the popup has the same links, in a Where section
 G.SlashCmdList["QUESTTHREAD"]("166")
 r166 = chain_row(166)
-r166._scripts["OnClick"](r166, "LeftButton")
+ns2.UI.Open(166, True, True)  # (clicking the selected quest would let go of it)
 pl = popup().linkRows
 check("the popup has a Where section: a dungeon line, then a zone line", "Where" in popup_text() and "Dungeon: Alpha Keep" in pl[1].fs._text and "Elwynn Forest" in pl[2].fs._text, (pl[1].fs._text, pl[2].fs._text))
 pdl = [b for b in pl[1].links.values() if b._shown]
@@ -1943,7 +1966,7 @@ check("the popup's zone link opens the map", G.waypointCalls.opened == 1429, G.w
 # without the journal the popup has the zone line only, and the dungeon line is gone from a re-shown popup
 G.ForeverDungeonJournal_NS = None
 r166 = chain_row(166)
-r166._scripts["OnClick"](r166, "LeftButton")
+ns2.UI.Open(166, True, True)  # (clicking the selected quest would let go of it)
 check("without the journal the popup shows no dungeon link", not any(b._shown and b.link.kind == "dungeon" for r in popup().linkRows.values() for b in r.links.values()))
 G.SlashCmdList["QUESTTHREAD"]("")
 
@@ -1964,21 +1987,21 @@ G.SlashCmdList["QUESTTHREAD"]("zone elwynn")
 check("/qthread zone <name> opens the Zones tab on that zone", ns2.UI.IsZoneMode() and mainwin.title._text == "Elwynn Forest", mainwin.title._text)
 check("the Zones tab is the lit one", mainwin.tabZone.under._shown and not mainwin.tabChain.under._shown)
 check("the filter starts on Available, the box asks for a zone", G.QuestThreadDB.zone.filter == "available" and mainwin.hint._text == "Zone name")
-check("the views are pill tabs in the header, the lit one on a plate", mainwin.tabZone.plate._shown and not mainwin.tabChain.plate._shown and mainwin.tabZone._size[1] == 54 and mainwin.tabZone._size[2] == 24 and not mainwin.tabLog.plate._shown)
-check("the search box leaves room for the three group tabs on the Zones tab", mainwin.box._w2 == 500 - 28 - 192 - 8, mainwin.box._w2)
+check("the views are pill tabs in the header, the lit one on a plate", mainwin.tabZone.plate._shown and not mainwin.tabChain.plate._shown and mainwin.tabZone._size[1] == 58 and mainwin.tabZone._size[2] == 26 and not mainwin.tabLog.plate._shown)
+check("the search box leaves room for the three group tabs on the Zones tab", mainwin.box._w2 == 540 - 28 - 220 - 8, mainwin.box._w2)
 tz = Z.Model(12)
 evz = Z.Evaluate(tz)
 check("the progress bar is shown, with available in gold as wide as its share and no blue (nothing in your log)",
       mainwin.prog._shown and mainwin.progAvail._shown and not mainwin.progLog._shown
-      and mainwin.progAvail._size[1] == round(472 * evz.totals.available / evz.totals.quests)
-      and mainwin.progDone._shown == (round(472 * evz.totals.done / evz.totals.quests) > 0), (mainwin.progAvail._size, dict(evz.totals)))
+      and mainwin.progAvail._size[1] == round(512 * evz.totals.available / evz.totals.quests)
+      and mainwin.progDone._shown == (round(512 * evz.totals.done / evz.totals.quests) > 0), (mainwin.progAvail._size, dict(evz.totals)))
 check("the lit chip is on a plate, the others are not", chips()[0].plate._shown and not chips()[1].plate._shown and not chips()[4].plate._shown)
 check("section headers have a band", all(r.hl._shown for r in zone_rows() if r.entry is None))
 cs = chips()
 check("five filter chips with just their names (no counts), Missed among them, and no Grey chip", [c.key for c in cs] == ["available", "log", "missed", "done", "all"] and [c.text._text for c in cs] == ["Available", "In log", "Missed", "Done", "All"] and cs[0].under._shown and not cs[4].under._shown,
       [(c.key, c.text._text) for c in cs])
 rows = zone_rows()
-check("the list starts right under the chips", rows[0]._pt[5] == -30, rows[0]._pt)
+check("the list starts right under the chips", rows[0]._pt[5] == -32, rows[0]._pt)
 heads = [r.name._text for r in rows if r.entry is None]
 check("by type: sections for chains and single quests", any("Chains" in h for h in heads) and any("Single quests" in h for h in heads), heads)
 # the sections fold shut
@@ -2036,13 +2059,17 @@ check("... and so does /qthread on its own", ns2.UI.IsZoneMode() and mainwin.tit
 ns2.UI.ShowZones(12)
 # clicking a row: the popup, on the Zones tab
 chain_row_z._scripts["OnClick"](chain_row_z, "LeftButton")
-check("clicking a zone row opens the details pane and stays on the Zones tab", popup() is not None and popup()._shown and ns2.UI.IsZoneMode())
+check("clicking a zone row fills the details pane and stays on the Zones tab", pane_open() and ns2.UI.IsZoneMode())
 check("the pane has no Chain button any more (the row has the icon)", popup().chainBtn is None)
+chain_row_z._scripts["OnClick"](chain_row_z, "LeftButton")
+check("clicking the selected zone row again empties the pane", popup().empty and popup()._shown)
+chain_row_z._scripts["OnClick"](chain_row_z, "LeftButton")
+check("... and once more fills it", pane_open())
 G.tipLines = lua.table()
 chain_row_z.chain._scripts["OnEnter"](chain_row_z.chain)
 check("hovering the row's chain icon says what it does", "Open this quest's chain" in list(G.tipLines.values()), list(G.tipLines.values()))
 chain_row_z.chain._scripts["OnClick"](chain_row_z.chain)
-check("the row's chain icon opens that quest's chain, with its details", not ns2.UI.IsZoneMode() and mainwin.title._text == ns2.Data.Name(entry65) and popup()._shown, mainwin.title._text)
+check("the row's chain icon opens that quest's chain, with its details", not ns2.UI.IsZoneMode() and mainwin.title._text == ns2.Data.Name(entry65) and pane_open(), mainwin.title._text)
 # the Zones tab: the list of all zones, by continent, with progress
 def pump(n=60):
     for _ in range(n):
@@ -2208,7 +2235,7 @@ chain_p._scripts["OnEnter"](chain_p)
 check("hovering a row lights it and shows its tooltip", chain_p.hl._shown and any(ns2.Data.Name(entry65) in t for t in G.tipLines.values()), list(G.tipLines.values())[:3])
 chain_p._scripts["OnLeave"](chain_p)
 chain_p._scripts["OnClick"](chain_p)
-check("clicking a row opens the quest in QuestThread's window with its popup", not ns2.UI.IsZoneMode() and mainwin.title._text == ns2.Data.Name(entry65) and popup()._shown, mainwin.title._text)
+check("clicking a row opens the quest in QuestThread's window with its popup", not ns2.UI.IsZoneMode() and mainwin.title._text == ns2.Data.Name(entry65) and pane_open(), mainwin.title._text)
 # filters are shared with the Zones tab
 G.UnitLevel = lua.eval("function() return 60 end")
 mpanel.chips[1]._scripts["OnClick"](mpanel.chips[1])

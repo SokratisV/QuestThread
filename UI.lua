@@ -8,12 +8,12 @@ ns.UI = UI
 
 -- The window: a column WIDTH wide (header, search, list), and, while a quest's details are open, a pane PANE_W wide
 -- on its right (the window grows to hold it).
-local WIDTH, HEIGHT, PANE_W = 500, 640, 290
+local WIDTH, HEIGHT, PANE_W = 540, 680, 310
 local CONTENT_W = WIDTH - 48
-local TOGGLE_W = 192 -- the By type | By giver | Breadcrumbs tabs
-local VIEW_W = 126 -- the List | Graph tabs of the chain view
+local TOGGLE_W = 220 -- the By type | By giver | Breadcrumbs tabs
+local VIEW_W = 137 -- the List | Graph tabs of the chain view
 local colW = WIDTH -- the column's width right now: WIDTH, wider in the graph view (see SetColumn)
-local TOP_BODY = 164 -- where the list's well starts, under the header, search row and quest summary
+local TOP_BODY = 170 -- where the list's well starts, under the header, search row and quest summary
 local ICON = 22
 local FLAT = "Interface\\Buttons\\WHITE8X8"
 -- Step status icons: four 32x32 cells in one sheet (tools/make-status-icons.py).
@@ -52,6 +52,8 @@ local gscroll, gcontent, gcanvas -- the chain's graph view: a scroll frame, its 
 local gnodes, glines, gedges = {}, {}, {} -- its quest boxes, line segments, and the edges (with their segments)
 local graphZoom -- nil = fit the chain in the view
 local MarkGraphSelection -- (set below) lights the box of the quest whose details are open
+local ShowEmptyPane -- (set below) the details pane with nothing selected: a hint
+local popup, popupFor -- the details pane, and the quest whose details it shows (nil: none)
 local rows, iconPool = {}, {}
 local current, notice, results, backTo
 local zoneMode, zonePick, zoneNotice, lastZoneShown -- the Zones tab
@@ -106,8 +108,17 @@ local function Solid(parent, layer, r, g, b, a)
   return t
 end
 
+-- Every text in the window is one step bigger than the game's own font it is made from.
+local FONT_BUMP = 2
+local function Bump(fs)
+  local file, size, flags = fs:GetFont()
+  if file and type(size) == "number" then fs:SetFont(file, size + FONT_BUMP, flags) end
+  return fs
+end
+
 local function Text(parent, font, justify)
   local fs = parent:CreateFontString(nil, "OVERLAY", font or "GameFontHighlightSmall")
+  Bump(fs)
   fs:SetJustifyH(justify or "LEFT")
   fs:SetWordWrap(false)
   return fs
@@ -180,7 +191,7 @@ end
 local hereWidth
 local function HereWidth()
   if not hereWidth then
-    local m = UIParent:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    local m = Bump(UIParent:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall"))
     m:SetText("You are here")
     local w = m:GetStringWidth()
     m:SetText("")
@@ -535,7 +546,7 @@ local LINK_RGB = { 0.56, 0.71, 0.78 } -- the blue of a zone link (|cff8fb4c8)
 local measureFS
 local function TextWidth(text)
   if text == "" then return 0 end
-  if not measureFS then measureFS = UIParent:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall") end
+  if not measureFS then measureFS = Bump(UIParent:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")) end
   measureFS:SetText(text)
   local w = measureFS:GetStringWidth()
   measureFS:SetText("")
@@ -558,7 +569,7 @@ end
 -- sit on (the owner itself for a row) and owner.hoverRow the row whose Ctrl+C stays live while over a link.
 local function NewLink(owner)
   local b = CreateFrame("Button", nil, owner.linkParent or owner)
-  b:SetHeight(12)
+  b:SetHeight(14)
   -- Clickable text is underlined, the way a hyperlink is (a font cannot underline, so it is a thin line).
   b.line = Solid(b, "OVERLAY", 0.56, 0.71, 0.78, 0.9)
   b.line:SetPoint("BOTTOMLEFT", 0, 1); b.line:SetPoint("BOTTOMRIGHT", 0, 1); b.line:SetHeight(1)
@@ -611,7 +622,7 @@ local function PlaceSegments(fs, owner, segs, maxW)
       b.rgb = s.rgb or LINK_RGB
       b.line:SetVertexColor(b.rgb[1], b.rgb[2], b.rgb[3], 0.9)
       b:ClearAllPoints(); b:SetPoint("TOPLEFT", fs, "TOPLEFT", x, 0)
-      b:SetSize(math.min(TextWidth(s.text), maxW - x), 12)
+      b:SetSize(math.min(TextWidth(s.text), maxW - x), 14)
       b:Show()
     end
     before = before .. s.text .. (s.sep or "")
@@ -671,16 +682,16 @@ local function GetRow(i)
   row.name = Text(row, "GameFontHighlight")
   row.name:SetPoint("TOPLEFT", 46, -5); row.name:SetWidth(CONTENT_W - 46 - 84)
   row.sub = Text(row, "GameFontNormalSmall")
-  row.sub:SetPoint("TOPLEFT", 46, -21); row.sub:SetWidth(CONTENT_W - 46 - 8)
+  row.sub:SetPoint("TOPLEFT", 46, -23); row.sub:SetWidth(CONTENT_W - 46 - 8)
   row.sub:Hide()
   row.where = Text(row, "GameFontNormalSmall")
-  row.where:SetPoint("TOPLEFT", 46, -21); row.where:SetWidth(CONTENT_W - 46 - 8)
+  row.where:SetPoint("TOPLEFT", 46, -23); row.where:SetWidth(CONTENT_W - 46 - 8)
   row.where:Hide()
   -- "You are here" is a button laid over the text: it opens the quest log on this quest.
   row.hoverRow = row
   row.here = CreateFrame("Button", nil, row)
-  row.here:SetPoint("TOPLEFT", 46, -21)
-  row.here:SetHeight(12)
+  row.here:SetPoint("TOPLEFT", 46, -23)
+  row.here:SetHeight(14)
   row.here:Hide()
   row.here.line = Solid(row.here, "OVERLAY", 1, 0.82, 0, 0.9)
   row.here.line:SetPoint("BOTTOMLEFT", 0, 1); row.here.line:SetPoint("BOTTOMRIGHT", 0, 1); row.here.line:SetHeight(1)
@@ -749,6 +760,8 @@ local function GetRow(i)
       UI.Open(self.questId, false, true)
       backTo = saved
       Render()
+    elseif popupFor == self.questId then
+      popupFor = nil; ShowEmptyPane() -- the selected quest again: let go of it
     else
       UI.Open(self.questId, true, true) -- inside a chain the list (if any) stays one Back away
     end
@@ -808,12 +821,12 @@ local function PlaceRow(n, y, h)
   row.status:Hide(); row.sub:SetText(""); row.sub:Hide(); row.where:SetText(""); row.where:Hide()
   row.chain:Hide(); row.fold:Hide(); row.meter:Hide(); row.meterFill:Hide(); row.rail:Hide(); row.stub:Hide(); row.badge:Hide()
   row.num:ClearAllPoints(); row.num:SetPoint("TOPLEFT", 2, -6); row.num:SetWidth(18); row.num:SetJustifyH("RIGHT")
-  row.here:ClearAllPoints(); row.here:SetPoint("TOPLEFT", 46, -21)
+  row.here:ClearAllPoints(); row.here:SetPoint("TOPLEFT", 46, -23)
   -- Rows are reused: the summary and result rows move the name, and a lead-in row indents everything.
   row.name:ClearAllPoints(); row.name:SetPoint("TOPLEFT", 46, -5); row.name:SetWidth(CONTENT_W - 46 - 84)
   row.status:ClearAllPoints(); row.status:SetPoint("TOPLEFT", 24, -5)
-  row.sub:ClearAllPoints(); row.sub:SetPoint("TOPLEFT", 46, -21)
-  row.where:ClearAllPoints(); row.where:SetPoint("TOPLEFT", 46, -21)
+  row.sub:ClearAllPoints(); row.sub:SetPoint("TOPLEFT", 46, -23)
+  row.where:ClearAllPoints(); row.where:SetPoint("TOPLEFT", 46, -23)
   row.bar:SetVertexColor(BRONZE_LIT[1], BRONZE_LIT[2], BRONZE_LIT[3], 1)
   return row
 end
@@ -846,7 +859,6 @@ end
 -- and items a quest needs and where they are, but not how many: the counts come from your quest log
 -- (Data.LiveObjectives), so they show once the quest is in it.
 local POP_W = PANE_W - 8
-local popup, popupFor
 
 local function Head(text) return "|cffffd100" .. text .. "|r" end
 
@@ -941,12 +953,11 @@ local function ObjectivePieces(id)
   return pieces
 end
 
--- The window is WIDTH wide, plus PANE_W while the details pane is open. If that would run off the right edge of the
--- screen, the window slides left by what hangs over.
+-- The window is the column plus the details pane, always (the pane is empty until a quest is picked, so the window
+-- never changes size). If that would run off the right edge of the screen, the window slides left by what hangs over.
 local function FitWidth()
   if not frame then return end
-  local open = popup and popup:IsShown()
-  frame:SetWidth(colW + (open and PANE_W or 0))
+  frame:SetWidth(colW + PANE_W)
   if popup then
     popup:ClearAllPoints()
     popup:SetPoint("TOPLEFT", frame, "TOPLEFT", colW - 2, -58)
@@ -1009,6 +1020,11 @@ local function BuildPopup()
   popup.sub:SetPoint("TOPLEFT", 14, -32); popup.sub:SetWidth(POP_W - 28)
   local rule = Solid(popup, "BORDER", BRONZE_MUTED[1], BRONZE_MUTED[2], BRONZE_MUTED[3], 0.6)
   rule:SetPoint("TOPLEFT", 14, -50); rule:SetPoint("TOPRIGHT", -14, -50); rule:SetHeight(1)
+  popup.rule = rule
+  popup.hint = Text(popup, "GameFontDisable", "CENTER")
+  popup.hint:SetWordWrap(true)
+  popup.hint:SetPoint("CENTER", popup, "CENTER", 0, 30); popup.hint:SetWidth(POP_W - 60)
+  popup.hint:SetText("Select a quest to see its objectives, rewards and where to go")
   popup.textRows, popup.itemRows, popup.linkRows = {}, {}, {}
   -- the details scroll inside the pane
   popup.scroll = CreateFrame("ScrollFrame", nil, popup)
@@ -1025,11 +1041,7 @@ local function BuildPopup()
   popup.thumb = Solid(popup, "OVERLAY", BRONZE[1], BRONZE[2], BRONZE[3], 0.9)
   popup.thumb:SetWidth(4)
   popup.thumb:Hide()
-  local close = Button(popup, "X", 24, 24)
-  close:SetPoint("TOPRIGHT", -10, -10)
-  close:SetScript("OnClick", function() popupFor = nil; popup:Hide(); FitWidth(); if MarkGraphSelection then MarkGraphSelection() end end)
-  popup.close = close
-  popup:Hide()
+  popup.empty = true
 end
 
 local function TextPiece(i)
@@ -1150,10 +1162,21 @@ local function ShowObjectives(id)
     bits[#bits + 1] = "|cffe0a64aBreadcrumb" .. (to and (" to " .. (Data.Name(to) or ("quest " .. to))) or "") .. "|r"
   end
   popup.sub:SetText(table.concat(bits, " · "))
+  popup.empty = false
+  popup.hint:Hide()
+  popup.title:Show(); popup.sub:Show(); popup.rule:Show(); popup.scroll:Show()
   LayoutPopup(ObjectivePieces(id))
   popup:Show()
-  FitWidth()
   PaneThumb()
+  if MarkGraphSelection then MarkGraphSelection() end
+end
+
+-- Nothing selected: the pane keeps its place and says what it is for.
+ShowEmptyPane = function()
+  if not popup then return end
+  popup.empty = true
+  popup.title:Hide(); popup.sub:Hide(); popup.rule:Hide(); popup.scroll:Hide(); popup.thumb:Hide()
+  popup.hint:Show()
   if MarkGraphSelection then MarkGraphSelection() end
 end
 
@@ -1178,12 +1201,12 @@ local STATUS_COLOR = { done = "|cffa8c8ac", log = "|cff8fc4ff", available = "|cf
 local function GetZoneBar()
   if zoneBar then return zoneBar end
   zoneBar = CreateFrame("Frame", nil, content)
-  zoneBar:SetSize(CONTENT_W, 26)
+  zoneBar:SetSize(CONTENT_W, 28)
   zoneBar:SetPoint("TOPLEFT", content, "TOPLEFT", 0, 0)
   zoneBar.chips = {}
   local w = CONTENT_W / #CHIPS
   for i, c in ipairs(CHIPS) do
-    local b = Button(zoneBar, c[2], w - 6, 22)
+    local b = Button(zoneBar, c[2], w - 6, 24)
     b:SetPoint("TOPLEFT", (i - 1) * w + 3, -2)
     b.key, b.label = c[1], c[2]
     b.under = Solid(b, "OVERLAY", BRONZE_LIT[1], BRONZE_LIT[2], BRONZE_LIT[3], 1)
@@ -1207,13 +1230,17 @@ local function ZoneRowClick(self, button)
     local mode = (IsShiftKeyDown and IsShiftKeyDown() and "end") or (IsAltKeyDown and IsAltKeyDown() and "start") or nil
     WaypointFor(self, mode)
   elseif self.questId then
-    popupFor = self.questId
-    ShowObjectives(self.questId)
+    if popupFor == self.questId then
+      popupFor = nil; ShowEmptyPane() -- the selected quest again: let go of it
+    else
+      popupFor = self.questId
+      ShowObjectives(self.questId)
+    end
   end
 end
 
 -- ---- a chain as a graph: columns for the steps, boxes for the quests, lines for what unlocks what ----
-local GN_W, GN_H, GN_GX, GN_GY, GN_PAD = 156, 54, 56, 14, 18
+local GN_W, GN_H, GN_GX, GN_GY, GN_PAD = 176, 60, 56, 14, 18
 local GZ_MIN, GZ_MAX = 0.4, 1.5
 local GN_BORDER = {
   done = { 0.35, 0.7, 0.42 }, log = { 0.35, 0.58, 0.95 }, available = { 0.92, 0.72, 0.28 },
@@ -1261,6 +1288,10 @@ local function GetGraphNode(i)
   n.name:SetPoint("TOPLEFT", 28, -6); n.name:SetSize(GN_W - 28 - 24, 26)
   n.num = Text(n, "GameFontNormalSmall", "RIGHT")
   n.num:SetPoint("TOPRIGHT", -7, -7); n.num:SetWidth(20)
+  n.here = Text(n, "GameFontNormalSmall", "CENTER")
+  n.here:SetPoint("BOTTOM", n, "TOP", 0, 1); n.here:SetWidth(GN_W)
+  n.here:SetText("|cffffd100You are here|r")
+  n.here:Hide()
   n.meta = Text(n, "GameFontNormalSmall")
   n.meta:SetPoint("BOTTOMLEFT", 7, 6); n.meta:SetWidth(GN_W - 14 - 62)
   n.xp = Text(n, "GameFontNormalSmall", "RIGHT")
@@ -1289,8 +1320,12 @@ local function GetGraphNode(i)
       local mode = (IsShiftKeyDown and IsShiftKeyDown() and "end") or (IsAltKeyDown and IsAltKeyDown() and "start") or nil
       WaypointFor(self, mode)
     elseif self.questId then
-      popupFor = self.questId
-      ShowObjectives(self.questId)
+      if popupFor == self.questId then
+        popupFor = nil; ShowEmptyPane()
+      else
+        popupFor = self.questId
+        ShowObjectives(self.questId)
+      end
     end
   end)
   gnodes[i] = n
@@ -1322,7 +1357,7 @@ local function RenderGraph(chain, all)
   gscroll:Show(); frame.gzoom:Show()
   content:SetHeight(1)
   -- the window grows to fit the chain at full size, but never past half the screen
-  SetColumn(math.max(WIDTH, math.min(W + 32, HalfScreen())))
+  SetColumn(math.max(WIDTH, math.min(W + 32, HalfScreen() - PANE_W)))
   frame.box:SetWidth(colW - 28 - VIEW_W - 8)
   gviewW = colW - 32
 
@@ -1340,6 +1375,7 @@ local function RenderGraph(chain, all)
     n:SetBackdropBorderColor(b[1] * dim, b[2] * dim, b[3] * dim, 1)
     n:SetAlpha(e.optional and 0.85 or 1)
     n.cur:SetShown(e.id == current)
+    n.here:SetShown(e.status == "log")
     n.hover:Hide()
     local cell = StatusCell(e.status, e.id)
     if cell then SetCell(n.status, cell); n.status:Show() else n.status:Hide() end
@@ -1415,6 +1451,17 @@ local function RenderGraph(chain, all)
 end
 
 -- ---- the My Log tab: your own quest log, by the game's own zone headers ----
+-- Where you hand a quest in: "Hand in: <who>, <zone>" (the zone is a link to its map), or just who when no spot is known.
+local function TurnInSegments(id)
+  local g = Data.Givers(id, "end")[1]
+  if not g then return nil end
+  local place = Data.Locate(g, id)
+  if place then
+    return { { text = "Hand in: " .. g.name .. ", " .. Data.ZoneName(place.area, place.uiMap), link = { kind = "zone", area = place.area } } }
+  end
+  return { { text = "Hand in: " .. g.name, color = "|cff9aa0a8" } }
+end
+
 local function RenderLog()
   frame.back:Hide()
   frame.toggle:Hide()
@@ -1444,7 +1491,7 @@ local function RenderLog()
     if #list > 0 or (g.collapsed and filter == "") then
       local fk = "log:" .. g.name
       local open = not collapsed[fk]
-      local head = nextRow(26)
+      local head = nextRow(28)
       head.hl:SetVertexColor(BRONZE[1], BRONZE[2], BRONZE[3], 0.16); head.hl:Show()
       head.fold:SetTexture(open and MINUS_ICON or PLUS_ICON); head.fold:Show()
       head.name:ClearAllPoints(); head.name:SetPoint("TOPLEFT", 28, -6); head.name:SetWidth(CONTENT_W - 150)
@@ -1454,7 +1501,7 @@ local function RenderLog()
       head.xp:SetText("|cff9aa0a8" .. #list .. (readyHere > 0 and (" · |cff66cc66" .. readyHere .. " ready|r") or "") .. "|r")
       head.onClick = function() collapsed[fk] = open or nil; Render() end
       if #list == 0 then
-        local note = nextRow(24)
+        local note = nextRow(26)
         note.name:ClearAllPoints(); note.name:SetPoint("TOPLEFT", 28, -5); note.name:SetWidth(CONTENT_W - 40)
         note.name:SetText("|cff9aa0a8Folded shut in the game's quest log: open it there to list these.|r")
       elseif open then
@@ -1474,7 +1521,9 @@ local function RenderLog()
             end
             if left then sub = "|cff9aa0a8" .. left .. (more > 0 and ("  +" .. more .. " more") or "") .. "|r" end
           end
-          local row = nextRow(sub and 40 or 28)
+          local turnIn = TurnInSegments(q.id)
+          local subH = sub and 14 or 0
+          local row = nextRow(30 + subH + (turnIn and 14 or 0))
           row.questId, row.entry, row.onClick = q.id, entry, ZoneRowClick
           SetCell(row.status, q.ready and STATUS_CELL.done or STATUS_CELL.log)
           row.status:ClearAllPoints(); row.status:SetPoint("TOPLEFT", 24, -5); row.status:Show()
@@ -1483,7 +1532,11 @@ local function RenderLog()
           local xp = Data.ClientXp(q.id)
           if xp then row.xp:SetText("|cffe8c34a" .. Num(xp) .. " XP|r") end
           if Data.index.prevs[q.id] or Data.index.nexts[q.id] then row.chain:Show() end
-          if sub then row.sub:ClearAllPoints(); row.sub:SetPoint("TOPLEFT", 46, -21); row.sub:SetText(sub); row.sub:Show() end
+          if sub then row.sub:ClearAllPoints(); row.sub:SetPoint("TOPLEFT", 46, -23); row.sub:SetText(sub); row.sub:Show() end
+          if turnIn then
+            row.where:ClearAllPoints(); row.where:SetPoint("TOPLEFT", 46, -(21 + subH))
+            PlaceSegments(row.where, row, turnIn, CONTENT_W - 46 - 8)
+          end
         end
       end
       shown = shown + #list
@@ -1641,7 +1694,7 @@ local function RenderZone()
   Zones = Zones or ns.Zones
   frame.back:SetShown(not zoneIndex)
   frame.back.text:SetText("All zones")
-  frame.back:SetWidth(76)
+  frame.back:SetWidth(90)
   frame.toggle:Show()
   SyncGroupTabs()
   if Data.state == "error" or Zones.state == "error" then
@@ -1674,7 +1727,7 @@ local function RenderZone()
   -- A section header: a soft bronze band, the title in gold, the count at the right.
   -- fold: nil for a plain header, true / false for a collapsible one that is open / folded shut (with its icon)
   local function header(text, count, color, fold)
-    local row = nextRow(26)
+    local row = nextRow(28)
     row.hl:SetVertexColor(BRONZE[1], BRONZE[2], BRONZE[3], 0.16); row.hl:Show()
     if fold ~= nil then row.fold:SetTexture(fold and MINUS_ICON or PLUS_ICON); row.fold:Show() end
     row.name:ClearAllPoints(); row.name:SetPoint("TOPLEFT", fold ~= nil and 28 or 8, -6); row.name:SetWidth(CONTENT_W - 150)
@@ -1742,7 +1795,7 @@ local function RenderZone()
     b.text:SetText(b.label)
     Lit(b, b.key == filter)
   end
-  y = 30
+  y = 32
 
   local function statusIcon(row, status, indent, id)
     local dim = status == "missed"
@@ -1774,7 +1827,7 @@ local function RenderZone()
       local to = Data.BreadcrumbTarget(id)
       if to then sub = "|cff8fb4c8Leads into " .. (Data.Name(to) or ("quest " .. to)) .. "|r" end
     end
-    local row = nextRow(sub and 40 or 28)
+    local row = nextRow(sub and 44 or 30)
     row.questId, row.entry, row.onClick = id, entry, ZoneRowClick
     statusIcon(row, s.status, indent, id)
     if model.chainOf[id] then row.chain:Show() end
@@ -1782,14 +1835,14 @@ local function RenderZone()
     row.name:SetText(Crumb(id) .. LevelTag(info.level) .. STATUS_COLOR[s.status] .. entry.name .. "|r  |cff808080#" .. id .. "|r")
     if s.status == "missed" then row.tag:SetText("|cffd9a04aMissed|r"); row.tag:Show() end
     if s.greyNote then row.tag:SetText("|cff9a9488Grey|r"); row.tag:Show() end
-    if sub then row.sub:ClearAllPoints(); row.sub:SetPoint("TOPLEFT", 46 + indent, -21); row.sub:SetText(sub); row.sub:Show() end
+    if sub then row.sub:ClearAllPoints(); row.sub:SetPoint("TOPLEFT", 46 + indent, -23); row.sub:SetText(sub); row.sub:Show() end
     return row
   end
   local function chainRow(c)
     local ce = ev.chain[c]
     local s = ev.quest[c.entry]
     local entry, info = entryFor(c.entry, c.name, s.status, s.detail, s.greyNote)
-    local row = nextRow(40)
+    local row = nextRow(44)
     row.questId, row.entry, row.onClick = c.entry, entry, ZoneRowClick
     statusIcon(row, ce.status, 0)
     row.name:ClearAllPoints(); row.name:SetPoint("TOPLEFT", 46, -5); row.name:SetWidth(CONTENT_W - 46 - 130)
@@ -1799,10 +1852,10 @@ local function RenderZone()
     if ce.counts.log > 0 then bits[#bits + 1] = "|cff8fc4ff" .. ce.counts.log .. " in your log|r" end
     if ce.counts.missed > 0 then bits[#bits + 1] = "|cffd9a04a" .. ce.counts.missed .. " missed|r" end
     if ce.counts.grey > 0 then bits[#bits + 1] = "|cff9a9488" .. ce.counts.grey .. " grey|r" end
-    row.sub:ClearAllPoints(); row.sub:SetPoint("TOPLEFT", 46, -21)
+    row.sub:ClearAllPoints(); row.sub:SetPoint("TOPLEFT", 46, -23)
     row.sub:SetText("|cff9aa0a8" .. table.concat(bits, " · ") .. "|r"); row.sub:Show()
     if ce.status == "missed" then
-      row.tag:ClearAllPoints(); row.tag:SetPoint("TOPRIGHT", -28, -21)
+      row.tag:ClearAllPoints(); row.tag:SetPoint("TOPRIGHT", -28, -23)
       row.tag:SetText("|cffd9a04aMissed|r"); row.tag:Show()
     end
     return row
@@ -1896,7 +1949,7 @@ function Render()
   if not frame then return end
   frame.back:SetShown(current ~= nil and backTo ~= nil)
   frame.back.text:SetText("Back")
-  frame.back:SetWidth(52)
+  frame.back:SetWidth(58)
   indexJob = nil
   SetProgress()
   -- the list is the default body; the graph view swaps it for the canvas
@@ -1907,7 +1960,7 @@ function Render()
   frame.viewToggle:Hide()
   SetColumn(WIDTH)
   if not zoneMode then frame.box:SetWidth(WIDTH - 28) end
-  if popup then popup:Hide(); FitWidth() end -- shown again at the end of a full chain render
+  if not popupFor then ShowEmptyPane() end -- (a selected quest's details are drawn again at the end of the render)
   for _, row in ipairs(rows) do row:Hide(); row.here:Hide(); HideLinks(row); ReleaseIcons(row) end
   if zoneBar then zoneBar:Hide() end
   if zoneMode then return RenderZone() end
@@ -1931,7 +1984,7 @@ function Render()
     frame.stats:SetText("")
     local y = 0
     for i, hit in ipairs(results) do
-      local row = PlaceRow(i, y, 24)
+      local row = PlaceRow(i, y, 26)
       row.questId = hit.id
       local lv = QuestDB.questLevel and QuestDB.questLevel(hit.id)
       row.name:ClearAllPoints(); row.name:SetPoint("TOPLEFT", 4, -5); row.name:SetWidth(CONTENT_W - 10)
@@ -2065,7 +2118,7 @@ function Render()
           cSub = "|cff9aa0a8Optional: leads into step " .. li .. "|r"
         end
         local cWhere = WhereSegments(c)
-        local crow = nextRow(28 + 12 + (cWhere and 12 or 0))
+        local crow = nextRow(30 + 14 + (cWhere and 14 or 0))
         crow.questId, crow.entry = c.id, c
         crow.num:SetText("»")
         local cell = StatusCell(c.status, c.id)
@@ -2079,28 +2132,29 @@ function Render()
         local cColor = (over or c.status == "done") and "|cff8a9a8c" or (c.status == "locked" and "|cffb4b4b4" or "|cffffffff")
         crow.tag:SetText("|cffe0a64aBreadcrumb|r"); crow.tag:Show()
         crow.name:SetText(Crumb(c.id) .. cLvl .. cColor .. c.name .. "|r  |cff808080#" .. c.id .. "|r")
-        crow.sub:ClearAllPoints(); crow.sub:SetPoint("TOPLEFT", 60, -21)
+        crow.sub:ClearAllPoints(); crow.sub:SetPoint("TOPLEFT", 60, -23)
         crow.sub:SetText(cSub); crow.sub:Show()
         if cWhere then
-          crow.where:ClearAllPoints(); crow.where:SetPoint("TOPLEFT", 60, -33)
+          crow.where:ClearAllPoints(); crow.where:SetPoint("TOPLEFT", 60, -37)
           PlaceSegments(crow.where, crow, cWhere, CONTENT_W - 60 - 8)
         end
         crow.bar:SetVertexColor(0.88, 0.65, 0.29, 0.8); crow.bar:Show()
       end
       local hasItems = #e.items > 0
       local rowLines = math.max(1, math.ceil(#e.items / 14))
-      local isCurrent = e.id == current
+      local isCurrent = e.id == current -- the quest you clicked (gold plate)
+      local here = e.status == "log" -- the quest you have in your quest log: that is where "You are here" goes
       local ind = e.optional and 32 or 0 -- an optional side quest hangs to the right, off its rail
       if isCurrent then currentY = y end
       -- A second line only for your quest and for locked quests; the icon carries the rest.
       local sub = {}
-      if isCurrent then sub[#sub + 1] = "|cffffd100You are here|r" end
+      if here then sub[#sub + 1] = "|cffffd100You are here|r" end
       if #(e.unmet or {}) > 0 then sub[#sub + 1] = "|cffff8a8aNeeds: " .. table.concat(e.unmet, " · ") .. "|r" end
-      local subH = #sub > 0 and 12 or 0
+      local subH = #sub > 0 and 14 or 0
       -- Where it happens: the zones of its kills, objects and drops (or where it is handed in).
       local whereSegs = WhereSegments(e)
-      local whereH = whereSegs and 12 or 0
-      local row = nextRow(28 + subH + whereH + (hasItems and rowLines * (ICON + 3) or 0))
+      local whereH = whereSegs and 14 or 0
+      local row = nextRow(30 + subH + whereH + (hasItems and rowLines * (ICON + 3) or 0))
       row.questId = e.id
       row.entry = e
       row.num:SetText(e.optional and ("|cffe0a64a" .. e.label .. "|r") or e.label)
@@ -2134,14 +2188,14 @@ function Render()
       end
       row.name:SetText(Crumb(e.id) .. lvl .. color .. e.name .. "|r  " .. idColor .. "#" .. e.id .. "|r" .. tag)
       if #sub > 0 then
-        row.sub:ClearAllPoints(); row.sub:SetPoint("TOPLEFT", 46 + ind, -21)
+        row.sub:ClearAllPoints(); row.sub:SetPoint("TOPLEFT", 46 + ind, -23)
         row.sub:SetText(table.concat(sub, "  ·  ")); row.sub:Show()
       end
-      if isCurrent then
+      if here then
         row.subNormal = table.concat(sub, "  ·  ")
         sub[1] = "|cffffffffYou are here|r" -- the lit-up version, while the mouse is over it
         row.subHot = table.concat(sub, "  ·  ")
-        row.here:ClearAllPoints(); row.here:SetPoint("TOPLEFT", 46 + ind, -21)
+        row.here:ClearAllPoints(); row.here:SetPoint("TOPLEFT", 46 + ind, -23)
         row.here:SetWidth(HereWidth()); row.here:Show()
       end
       if whereSegs then
@@ -2154,17 +2208,17 @@ function Render()
       -- A breadcrumb opened as a step of its own (normally they hang above the quest they lead into).
       if Data.IsBreadcrumb(e.id) then
         row.tag:SetText("|cffe0a64aBreadcrumb|r")
-        if e.xp > 0 then row.tag:ClearAllPoints(); row.tag:SetPoint("TOPRIGHT", -2, -21) end -- under the XP
+        if e.xp > 0 then row.tag:ClearAllPoints(); row.tag:SetPoint("TOPRIGHT", -2, -23) end -- under the XP
         row.tag:Show()
       elseif e.optional then
         row.tag:SetText("|cffe0a64aOptional|r")
-        if e.xp > 0 then row.tag:ClearAllPoints(); row.tag:SetPoint("TOPRIGHT", -2, -21) end -- under the XP
+        if e.xp > 0 then row.tag:ClearAllPoints(); row.tag:SetPoint("TOPRIGHT", -2, -23) end -- under the XP
         row.tag:Show()
       end
       if isCurrent then
         row.hl:SetVertexColor(BRONZE_HOVER[1], BRONZE_HOVER[2], BRONZE_HOVER[3], 0.22); row.hl:Show(); row.bar:Show()
       end
-      if hasItems then PlaceIcons(row, e.items, 46 + ind, -(24 + subH + whereH), 14) end
+      if hasItems then PlaceIcons(row, e.items, 46 + ind, -(26 + subH + whereH), 14) end
     end
   end
   content:SetHeight(math.max(y, 1))
@@ -2199,7 +2253,7 @@ local function PlaceDefault(f)
   if type(uw) == "number" and type(uh) == "number" and uw > 0 and uh > 0 then
     local s = f:GetScale()
     s = (type(s) == "number" and s > 0) and s or 1
-    f:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", math.max(0, (uw / s - WIDTH) / 2), (uh / s + HEIGHT) / 2)
+    f:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", math.max(0, (uw / s - WIDTH - PANE_W) / 2), (uh / s + HEIGHT) / 2)
   else
     f:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
   end
@@ -2219,7 +2273,7 @@ end
 local function Create()
   if frame then return frame end
   local f = CreateFrame("Frame", "QuestThreadFrame", UIParent, "BackdropTemplate")
-  f:SetSize(WIDTH, HEIGHT)
+  f:SetSize(WIDTH + PANE_W, HEIGHT)
   f:SetFrameStrata("FULLSCREEN_DIALOG") -- above a fullscreen world map
   f:SetClampedToScreen(true)
   f:SetMovable(true)
@@ -2282,13 +2336,13 @@ local function Create()
   f.progAvail = Solid(f, "OVERLAY", 0.85, 0.65, 0.15, 1)
   f.progDone:Hide(); f.progLog:Hide(); f.progAvail:Hide()
 
-  local close = Button(f, "X", 24, 24)
+  local close = Button(f, "X", 26, 26)
   close:SetPoint("TOPRIGHT", -12, -13)
   close:SetScript("OnClick", function() f:Hide() end)
 
   -- Chains | Zones: the window's two views (and the shape of the By type | By giver | Breadcrumbs tabs below).
   local function Tab(label, anchor, dx, parent, w)
-    local b = Button(parent or f, label, w or 58, 24)
+    local b = Button(parent or f, label, w or 58, 26)
     if anchor then b:SetPoint("LEFT", anchor, "RIGHT", dx, 0) end
     b.under = Solid(b, "OVERLAY", BRONZE_LIT[1], BRONZE_LIT[2], BRONZE_LIT[3], 1)
     b.under:SetPoint("BOTTOMLEFT", 6, -2); b.under:SetPoint("BOTTOMRIGHT", -6, -2); b.under:SetHeight(2)
@@ -2296,18 +2350,20 @@ local function Create()
     b.plate:SetAllPoints(); b.plate:Hide()
     return b
   end
-  f.tabLog = Tab("My Log", nil, 0, nil, 62)
+  f.tabLog = Tab("My Log", nil, 0, nil, 66)
   f.tabLog:SetPoint("RIGHT", close, "LEFT", -8, 0)
-  f.tabZone = Tab("Zones", nil, 0, nil, 54)
+  f.tabZone = Tab("Zones", nil, 0, nil, 58)
   f.tabZone:SetPoint("RIGHT", f.tabLog, "LEFT", -4, 0)
-  f.tabChain = Tab("Chains", nil, 0, nil, 58)
+  f.tabChain = Tab("Chains", nil, 0, nil, 62)
   f.tabChain:SetPoint("RIGHT", f.tabZone, "LEFT", -4, 0)
   f.tabChain:SetScript("OnClick", function() UI.ShowChains() end)
   f.tabZone:SetScript("OnClick", function() UI.ShowZones() end)
   f.tabLog:SetScript("OnClick", function() UI.ShowLog() end)
 
-  local back = Button(f, "Back", 52, 24)
+  local back = Button(f, "Back", 58, 26)
   back:SetPoint("RIGHT", f.tabChain, "LEFT", -8, 0)
+  back:SetScript("OnShow", function() f.version:Hide() end)
+  back:SetScript("OnHide", function() f.version:Show() end)
   back:SetScript("OnClick", function()
     if zoneMode then -- in a zone: back to the list of zones
       zoneIndex, zonePick, zoneNotice, popupFor = true, nil, nil, nil
@@ -2323,10 +2379,11 @@ local function Create()
   f.back = back
 
   local box = CreateFrame("EditBox", nil, f, "BackdropTemplate")
-  box:SetSize(WIDTH - 28, 26)
+  box:SetSize(WIDTH - 28, 28)
   box:SetPoint("TOPLEFT", 14, -60)
   box:SetAutoFocus(false)
   box:SetFontObject("ChatFontNormal")
+  Bump(box)
   box:SetTextInsets(28, 8, 0, 0)
   local mag = box:CreateTexture(nil, "OVERLAY")
   mag:SetTexture("Interface\\Common\\UI-Searchbox-Icon")
@@ -2437,23 +2494,23 @@ local function Create()
 
   -- By type | By giver | Breadcrumbs: how the Zones tab lists its quests (only shown there), right of the search box.
   local toggle = CreateFrame("Frame", nil, f)
-  toggle:SetSize(TOGGLE_W, 26)
+  toggle:SetSize(TOGGLE_W, 28)
   toggle:SetPoint("TOPLEFT", f, "TOPLEFT", WIDTH - 14 - TOGGLE_W, -60)
   f.toggle = toggle
-  f.tabType = Tab("By type", nil, 0, toggle, 50)
+  f.tabType = Tab("By type", nil, 0, toggle, 58)
   f.tabType:SetPoint("LEFT", toggle, "LEFT", 0, 0)
-  f.tabGiver = Tab("By giver", f.tabType, 3, toggle, 56)
-  f.tabCrumbs = Tab("Breadcrumbs", f.tabGiver, 3, toggle, 80)
+  f.tabGiver = Tab("By giver", f.tabType, 3, toggle, 62)
+  f.tabCrumbs = Tab("Breadcrumbs", f.tabGiver, 3, toggle, 93)
 
   -- List | Graph: how the chain is drawn (only shown with a chain), right of the search box
   local views = CreateFrame("Frame", nil, f)
-  views:SetSize(VIEW_W, 26)
+  views:SetSize(VIEW_W, 28)
   views:SetPoint("TOPLEFT", f, "TOPLEFT", WIDTH - 14 - VIEW_W, -60)
   views:Hide()
   f.viewToggle = views
-  f.tabList = Tab("List", nil, 0, views, 60)
+  f.tabList = Tab("List", nil, 0, views, 64)
   f.tabList:SetPoint("LEFT", views, "LEFT", 0, 0)
-  f.tabGraph = Tab("Graph", f.tabList, 3, views, 63)
+  f.tabGraph = Tab("Graph", f.tabList, 3, views, 70)
   f.tabList:SetScript("OnClick", function() DB().chainView = "list"; Render() end)
   f.tabGraph:SetScript("OnClick", function() DB().chainView = "graph"; Render() end)
   f.tabType:SetScript("OnClick", function()
@@ -2649,6 +2706,9 @@ local function Create()
   end)
   f:Hide()
   frame = f
+  BuildPopup()
+  ShowEmptyPane()
+  FitWidth()
   return f
 end
 
