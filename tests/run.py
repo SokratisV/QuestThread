@@ -1051,7 +1051,34 @@ check("on a small screen it never goes under its normal width", gwin._w2 == 850,
 G.UIParent.GetWidth = lua.eval("function() return 1920 end")
 gwin.tabList._scripts["OnClick"](gwin.tabList)
 check("the List tab goes back to the normal width", gwin._w2 == 850, gwin._w2)
+# Across | Down: the chain drawn top to bottom
 gwin.tabGraph._scripts["OnClick"](gwin.tabGraph)
+check("the graph starts Across (Across lit, Down not)", gwin.gzoom.across.plate._shown and not gwin.gzoom.down.plate._shown and G.QuestThreadDB.graphDir is None, G.QuestThreadDB.graphDir)
+across_pts = {f.questId: (f._pt[4], f._pt[5]) for f in G.stubs.values() if f._shown and f.cur is not None and f.meta is not None and f.questId is not None}
+gwin.gzoom.down._scripts["OnClick"](gwin.gzoom.down)
+check("Down is lit, Across not, and the choice is remembered", gwin.gzoom.down.plate._shown and not gwin.gzoom.across.plate._shown and G.QuestThreadDB.graphDir == "down")
+dnodes = [f for f in G.stubs.values() if f._shown and f.cur is not None and f.meta is not None and f.questId is not None]
+check("Down still has a box for every quest", sorted(f.questId for f in dnodes) == sorted(main_ids + opt_ids), len(dnodes))
+bad = [(f.questId, f._pt[4], f._pt[5]) for f in dnodes if f._pt[4] != 18 + glayout.nodes[f.questId].row * 194 or f._pt[5] != -(18 + glayout.nodes[f.questId].col * 112)]
+check("each box sits in its step's row and its slot's column", not bad, bad[:3])
+dn = {f.questId: f for f in dnodes}
+check("a step runs down the page: a quest sits below its prerequisites", all(dn[ed["from"]]._pt[5] > dn[ed["to"]]._pt[5] for ed in glayout.edges.values()), None)
+dlines = [f for f in G.stubs.values() if f._shown and f._start is not None and f._end is not None]
+check("every line is straight along an axis in Down too", len(dlines) >= len(glayout.edges) and all(f._start[1] == f._end[1] or f._start[2] == f._end[2] for f in dlines), (len(dlines), len(glayout.edges)))
+missing = []
+for ed in glayout.edges.values():
+    a, b = dn[ed["from"]], dn[ed["to"]]
+    ax, ay = a._pt[4] + 88, a._pt[5] - 60   # bottom middle of the prerequisite (y is negative: downward)
+    bx, by = b._pt[4] + 88, b._pt[5]        # top middle of the quest it unlocks
+    leaves = any(f._start[1] == ax and f._start[2] == ay for f in dlines)
+    enters = any(f._end[1] == bx and f._end[2] == by for f in dlines)
+    if not (leaves and enters):
+        missing.append((ed["from"], ed["to"], leaves, enters))
+check("every line leaves the bottom of one box and enters the top of the next", not missing, missing[:3])
+check("Down is as wide as its widest step needs, never past half the screen", gwin._w2 >= 850 and gwin._w2 <= 960, gwin._w2)
+gwin.gzoom.across._scripts["OnClick"](gwin.gzoom.across)
+back_pts = {f.questId: (f._pt[4], f._pt[5]) for f in G.stubs.values() if f._shown and f.cur is not None and f.meta is not None and f.questId is not None}
+check("Across brings the first layout back", back_pts == across_pts and G.QuestThreadDB.graphDir == "across", G.QuestThreadDB.graphDir)
 gwin.tabList._scripts["OnClick"](gwin.tabList)
 check("the List tab goes back to the list (and the choice is remembered)", gwin.scroll._shown and not gwin.gscroll._shown and not gwin.gzoom._shown and G.QuestThreadDB.chainView == "list" and gwin.tabList.plate._shown)
 check("the list is shown again: a row per quest", all(chain_row(i) is not None for i in main_ids + opt_ids))
@@ -2026,6 +2053,17 @@ chain_row_z = next((r for r in rows if r.questId == entry65), None)
 check("a chain is one row: how much is done under it, a chain-link icon at its right, and no steps/levels text",
       chain_row_z is not None and chain_row_z.xp._text == "" and "of 8 done" in chain_row_z.sub._text and chain_row_z.chain._shown, chain_row_z and (chain_row_z.xp._text, chain_row_z.sub._text))
 check("the right-hand text leaves room for the icon", chain_row_z.tag._pt[2] == -28, chain_row_z.tag._pt)
+G.tipLines = lua.table()
+chain_row_z._scripts["OnEnter"](chain_row_z)
+ztip = list(G.tipLines.values())
+check("a chain row's tooltip says how the chain stands before the first quest's details", len(ztip) > 2 and ztip[1].startswith("Chain of ") and " done, " in ztip[1] and "first" in ztip[2], ztip[:3])
+chain_row_z._scripts["OnLeave"](chain_row_z)
+one_z = next((r for r in rows if r.entry is not None and not r.chain._shown), None)
+if one_z is not None:
+    G.tipLines = lua.table()
+    one_z._scripts["OnEnter"](one_z)
+    check("a single quest's tooltip has no chain line", not any(str(l).startswith("Chain of ") for l in G.tipLines.values()), list(G.tipLines.values())[:3])
+    one_z._scripts["OnLeave"](one_z)
 check("quest and chain rows start with the quest's level in its colour", all("|cff" in r.name._text and "[" in r.name._text for r in rows if r.entry is not None))
 singles_here = set(m12.singles.values())
 check("a single quest that is in no chain has no chain-link icon", all(not r.chain._shown for r in rows if r.questId in singles_here and ns2.Zones.Model(12).chainOf[r.questId] is None))
@@ -2150,6 +2188,15 @@ check("Crumbs lists only breadcrumb quests, under one Breadcrumbs header",
       len(crow_q) > 0 and all(ns2.Data.IsBreadcrumb(r.questId) for r in crow_q) and len(crow_h) == 1 and "Breadcrumbs" in crow_h[0], (len(crow_q), crow_h))
 check("... including Raven Hill (#163), which the By type list has as a single quest", any(r.questId == 163 for r in crow_q))
 check("a breadcrumb row says what it leads into", any("Leads into" in r.sub._text for r in crow_q), [r.sub._text for r in crow_q][:3])
+cs = chips()
+cs[-1]._scripts["OnClick"](cs[-1])  # the All filter
+n_crumbs = sum(1 for r in zone_rows() if r.entry is not None)
+check("the summary counts only the breadcrumbs, as many as the All list shows (not the whole zone)",
+      mainwin.sub._text == "%d breadcrumb quests in this zone" % n_crumbs and n_crumbs < 300, (mainwin.sub._text, n_crumbs))
+cs[0]._scripts["OnClick"](cs[0])
+mainwin.tabType._scripts["OnClick"](mainwin.tabType)
+check("By type's summary counts the whole zone", "breadcrumb" not in mainwin.sub._text and mainwin.sub._text.endswith("quests in this zone"), mainwin.sub._text)
+mainwin.tabCrumbs._scripts["OnClick"](mainwin.tabCrumbs)
 mainwin.tabGiver._scripts["OnClick"](mainwin.tabGiver)
 check("By giver leaves Crumbs and lights up itself", mainwin.tabGiver.under._shown and not mainwin.tabCrumbs.under._shown and not G.QuestThreadDB.zone.crumbs and mainwin.tabGiver.under._shown)
 mainwin.tabCrumbs._scripts["OnClick"](mainwin.tabCrumbs)

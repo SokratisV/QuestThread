@@ -96,7 +96,12 @@ tabs, the search box with its magnifier, the quest or zone you are looking at wi
   the list. The box whose details are open gets a bright ring, and its lines stay lit. **Drag** to pan, **Ctrl+scroll**
   (or the - and + buttons) to zoom, **Alt+scroll** to scroll sideways (a hint under the graph says so), **Fit** to fit
   the whole chain. The window grows wider to fit the chain, but never past half the screen's width; it opens fitted,
-  centred on your quest.
+  centred on your quest. **Across | Down** (bottom right of the graph) chooses the direction: Across has a column per
+  step, Down a row per step, quests of a step side by side, lines from a box's bottom to the next box's top; the choice
+  is remembered.
+- On the Zones tab a chain is one row, with the **chain's own standing** in its icon ("26 of 40 done"). Its tooltip
+  starts with the same standing ("Chain of 40 quests: 26 done, has quests you can take"), then gives the details of the
+  chain's first quest. The Breadcrumbs tab's summary and progress bar count only the breadcrumb quests.
 
 ## My Log
 The **My Log** tab (right of **Zones**, or `/qthread log`) is a quick view of your own quest log: your quests under

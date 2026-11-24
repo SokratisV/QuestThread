@@ -290,6 +290,8 @@ local function ShowQuestTip(row)
   end
   GameTooltip:SetOwner(row, "ANCHOR_RIGHT")
   GameTooltip:AddLine(Crumb(e.id) .. e.name, 1, 0.82, 0)
+  -- A chain row of the Zones list: the chain's own standing first (the details below are for its first quest).
+  for _, line in ipairs(row.chainTip or {}) do GameTooltip:AddLine(line[1], line[2], line[3], line[4], true) end
   local leadsTo = e.leadsTo or (Data.IsBreadcrumb(e.id) and Data.BreadcrumbTarget(e.id)) or nil
   if leadsTo then
     GameTooltip:AddLine("Breadcrumb quest: optional, leads into " .. (Data.Name(leadsTo) or ("quest " .. leadsTo)), 0.88, 0.65, 0.29)
@@ -812,7 +814,7 @@ local function PlaceRow(n, y, h)
   row:SetHeight(h)
   row:Show()
   row.hl:Hide(); row.bar:Hide(); row.hover:Hide()
-  row.questId, row.entry = nil, nil
+  row.questId, row.entry, row.chainTip = nil, nil, nil
   row.rep:Hide(); row.rep:SetWordWrap(false); row.rep:SetWidth(CONTENT_W - 40)
   row.xp:SetText(""); row.num:SetText(""); row.name:SetText("")
   row.here:Hide(); row.subNormal, row.subHot = nil, nil; HideLinks(row)
@@ -1241,6 +1243,7 @@ end
 
 -- ---- a chain as a graph: columns for the steps, boxes for the quests, lines for what unlocks what ----
 local GN_W, GN_H, GN_GX, GN_GY, GN_PAD = 176, 60, 56, 14, 18
+local DN_GX, DN_GY = 18, 52 -- the gaps when the chain is drawn downward: between side-by-side boxes, and between steps
 local GZ_MIN, GZ_MAX = 0.4, 1.5
 local GN_BORDER = {
   done = { 0.35, 0.7, 0.42 }, log = { 0.35, 0.58, 0.95 }, available = { 0.92, 0.72, 0.28 },
@@ -1349,10 +1352,20 @@ end
 -- Draws the chain. `all` are the chain's entries with their status, xp and label (see Render).
 local function RenderGraph(chain, all)
   local layout = Core.GraphLayout(chain.layers, Data.index.prevs)
-  local W = 2 * GN_PAD + layout.cols * GN_W + math.max(0, layout.cols - 1) * GN_GX
-  local H = 2 * GN_PAD + layout.rows * GN_H + math.max(0, layout.rows - 1) * GN_GY
-  local function colX(c) return GN_PAD + c * (GN_W + GN_GX) end
-  local function rowY(r) return GN_PAD + r * (GN_H + GN_GY) end
+  -- Across: a step per column, its quests stacked. Down: a step per row, its quests side by side.
+  local down = DB().graphDir == "down"
+  local gx, gy = down and DN_GX or GN_GX, down and DN_GY or GN_GY -- the gaps between boxes along the two axes
+  local W, H
+  if down then
+    W = 2 * GN_PAD + layout.rows * GN_W + math.max(0, layout.rows - 1) * gx
+    H = 2 * GN_PAD + layout.cols * GN_H + math.max(0, layout.cols - 1) * gy
+  else
+    W = 2 * GN_PAD + layout.cols * GN_W + math.max(0, layout.cols - 1) * GN_GX
+    H = 2 * GN_PAD + layout.rows * GN_H + math.max(0, layout.rows - 1) * GN_GY
+  end
+  local function nodeX(n) return GN_PAD + (down and n.row or n.col) * (GN_W + gx) end
+  local function nodeY(n) return GN_PAD + (down and n.col or n.row) * (GN_H + gy) end
+  Lit(frame.gzoom.across, not down); Lit(frame.gzoom.down, down)
   scroll:Hide(); frame.bar:Hide()
   gscroll:Show(); frame.gzoom:Show()
   content:SetHeight(1)
@@ -1369,7 +1382,7 @@ local function RenderGraph(chain, all)
     local n = GetGraphNode(i)
     byId[e.id] = n
     n.questId, n.entry = e.id, e
-    n:ClearAllPoints(); n:SetPoint("TOPLEFT", gcanvas, "TOPLEFT", colX(node.col), -rowY(node.row))
+    n:ClearAllPoints(); n:SetPoint("TOPLEFT", gcanvas, "TOPLEFT", nodeX(node), -nodeY(node))
     local b = GN_BORDER[e.status] or GN_BORDER.locked
     local dim = e.optional and 0.7 or 1
     n:SetBackdropBorderColor(b[1] * dim, b[2] * dim, b[3] * dim, 1)
@@ -1412,15 +1425,30 @@ local function RenderGraph(chain, all)
       l:Show()
       edge.lines[#edge.lines + 1] = l
     end
-    local ax, ay = colX(a.col) + GN_W, rowY(a.row) + GN_H / 2
-    local bx, by = colX(b.col), rowY(b.row) + GN_H / 2
-    if b.col == a.col + 1 then
-      local gx = ax + GN_GX / 2 + lane(a.row)
-      seg(ax, ay, gx, ay); seg(gx, ay, gx, by); seg(gx, by, bx, by)
+    if down then
+      -- out of a quest's bottom into the corridor under its step, then (for a quest further down) along the gap left of
+      -- the target's slot, and in from the corridor above the target's step to its top
+      local ax, ay = nodeX(a) + GN_W / 2, nodeY(a) + GN_H
+      local bx, by = nodeX(b) + GN_W / 2, nodeY(b)
+      if b.col == a.col + 1 then
+        local cy = ay + DN_GY / 2 + lane(a.row)
+        seg(ax, ay, ax, cy); seg(ax, cy, bx, cy); seg(bx, cy, bx, by)
+      else
+        local cy1, cy2 = ay + DN_GY / 2 + lane(a.row), by - DN_GY / 2 + lane(b.row)
+        local cx = nodeX(b) - DN_GX / 2
+        seg(ax, ay, ax, cy1); seg(ax, cy1, cx, cy1); seg(cx, cy1, cx, cy2); seg(cx, cy2, bx, cy2); seg(bx, cy2, bx, by)
+      end
     else
-      local gx1, gx2 = ax + GN_GX / 2 + lane(a.row), bx - GN_GX / 2 + lane(b.row)
-      local gy = rowY(b.row) - GN_GY / 2
-      seg(ax, ay, gx1, ay); seg(gx1, ay, gx1, gy); seg(gx1, gy, gx2, gy); seg(gx2, gy, gx2, by); seg(gx2, by, bx, by)
+      local ax, ay = nodeX(a) + GN_W, nodeY(a) + GN_H / 2
+      local bx, by = nodeX(b), nodeY(b) + GN_H / 2
+      if b.col == a.col + 1 then
+        local cx = ax + GN_GX / 2 + lane(a.row)
+        seg(ax, ay, cx, ay); seg(cx, ay, cx, by); seg(cx, by, bx, by)
+      else
+        local cx1, cx2 = ax + GN_GX / 2 + lane(a.row), bx - GN_GX / 2 + lane(b.row)
+        local cy = nodeY(b) - GN_GY / 2
+        seg(ax, ay, cx1, ay); seg(cx1, ay, cx1, cy); seg(cx1, cy, cx2, cy); seg(cx2, cy, cx2, by); seg(cx2, by, bx, by)
+      end
     end
     gedges[#gedges + 1] = edge
   end
@@ -1429,7 +1457,8 @@ local function RenderGraph(chain, all)
   -- zoom: fit the chain in the view unless you have zoomed yourself
   local vw, vh = gviewW, gscroll:GetHeight()
   local zoom = graphZoom
-  if not zoom then zoom = math.min(1, (vw or W) / W, (vh or H) / H) end
+  -- (a chain drawn downward is as tall as it has steps: fit its width and let it scroll down)
+  if not zoom then zoom = down and math.min(1, (vw or W) / W) or math.min(1, (vw or W) / W, (vh or H) / H) end
   zoom = math.min(GZ_MAX, math.max(GZ_MIN, zoom))
   frame.gzoom.value = zoom
   gcanvas:SetSize(W, H)
@@ -1439,7 +1468,7 @@ local function RenderGraph(chain, all)
   local cur = current and layout.nodes[current]
   local function centre()
     if cur then
-      GraphScrollTo((colX(cur.col) + GN_W / 2) * zoom - (vw or 0) / 2, (rowY(cur.row) + GN_H / 2) * zoom - (vh or 0) / 2)
+      GraphScrollTo((nodeX(cur) + GN_W / 2) * zoom - (vw or 0) / 2, (nodeY(cur) + GN_H / 2) * zoom - (vh or 0) / 2)
     else
       GraphScrollTo(0, 0)
     end
@@ -1785,8 +1814,20 @@ local function RenderZone()
   local ev = Zones.Evaluate(model)
   local t = ev.totals
   local filter = ZS().filter
+  local crumbsOnly = ZS().crumbs
+  if crumbsOnly then
+    -- the Breadcrumbs tab lists only the breadcrumb quests, so its summary counts only those (not the whole zone)
+    t = { quests = 0, done = 0, log = 0, available = 0, locked = 0, missed = 0 }
+    for _, id in ipairs(model.quests) do
+      if Data.IsBreadcrumb(id) then
+        local st = ev.quest[id].status
+        t.quests = t.quests + 1
+        t[st] = t[st] + 1
+      end
+    end
+  end
   frame.title:SetText(model.name)
-  frame.sub:SetText(zoneNotice or ("%d quests in this zone"):format(t.quests))
+  frame.sub:SetText(zoneNotice or (crumbsOnly and ("%d breadcrumb quests in this zone") or ("%d quests in this zone")):format(t.quests))
   frame.stats:SetText(("%d available · %d in your log · %d missed · %d done"):format(t.available, t.log, t.missed, t.done))
   SetProgress(t.done, t.log, t.available, t.quests)
   local bar = GetZoneBar()
@@ -1848,6 +1889,11 @@ local function RenderZone()
     row.name:ClearAllPoints(); row.name:SetPoint("TOPLEFT", 46, -5); row.name:SetWidth(CONTENT_W - 46 - 130)
     row.name:SetText(LevelTag(c.minLevel or info.level) .. STATUS_COLOR[ce.status] .. c.name .. "|r  |cff808080#" .. c.entry .. "|r")
     row.chain:Show()
+    local CHAIN_WORD = { done = "completed", log = "in your log", available = "has quests you can take", missed = "has missed quests", locked = "locked" }
+    local tip = { { "Chain of " .. #c.ids .. " quests: " .. ce.counts.done .. " done, " .. (CHAIN_WORD[ce.status] or ce.status), 0.82, 0.82, 0.9 } }
+    if ce.counts.grey > 0 then tip[#tip + 1] = { ce.counts.grey .. " of them are grey to you", 0.62, 0.6, 0.55 } end
+    tip[#tip + 1] = { "The quest below is the chain's first.", 0.6, 0.6, 0.6 }
+    row.chainTip = tip
     local bits = { ce.counts.done .. " of " .. #c.ids .. " done" }
     if ce.counts.log > 0 then bits[#bits + 1] = "|cff8fc4ff" .. ce.counts.log .. " in your log|r" end
     if ce.counts.missed > 0 then bits[#bits + 1] = "|cffd9a04a" .. ce.counts.missed .. " missed|r" end
@@ -2596,8 +2642,17 @@ local function Create()
   gz.fit:SetScript("OnClick", function() graphZoom = nil; Render() end)
   gz.hint = Text(gz, "GameFontDisableSmall")
   gz.hint:SetPoint("LEFT", gz.fit, "RIGHT", 12, 0)
-  gz.hint:SetWidth(330)
-  gz.hint:SetText("Drag: pan   ·   Ctrl+scroll: zoom in / out   ·   Alt+scroll: sideways")
+  gz.hint:SetWidth(280)
+  gz.hint:SetText("Drag: pan  ·  Ctrl+scroll: zoom  ·  Alt+scroll: sideways")
+  -- Across | Down: which way the chain runs (right end of the same strip; remembered)
+  gz.down = Tab("Down", nil, 0, gz, 46)
+  gz.down:SetHeight(22)
+  gz.down:SetPoint("BOTTOMRIGHT", well, "BOTTOMRIGHT", -10, 8)
+  gz.down:SetScript("OnClick", function() DB().graphDir = "down"; graphZoom = nil; Render() end)
+  gz.across = Tab("Across", nil, 0, gz, 56)
+  gz.across:SetHeight(22)
+  gz.across:SetPoint("RIGHT", gz.down, "LEFT", -3, 0)
+  gz.across:SetScript("OnClick", function() DB().graphDir = "across"; graphZoom = nil; Render() end)
   gz:Hide()
   f.gzoom = gz
   f.gscroll, f.gcanvas, f.gcontent = gscroll, gcanvas, gcontent
