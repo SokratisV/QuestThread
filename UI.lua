@@ -18,14 +18,14 @@ local ICON = 22
 local FLAT = "Interface\\Buttons\\WHITE8X8"
 -- Step status icons: four 32x32 cells in one sheet (tools/make-status-icons.py).
 local STATUS_TEX = "Interface\\AddOns\\QuestThread\\Status.tga"
--- Status.tga is eight 32-px cells side by side (five drawn). "again" is the green "!" of a repeatable quest you have
--- already completed once and can take again.
+-- Status.tga is eight 32-px cells side by side (six drawn). "repeated" is the blue check of a repeatable quest you have
+-- already completed once.
 local STATUS_CELLS = 8
-local STATUS_CELL = { done = 0, log = 1, available = 2, locked = 3, again = 4 }
+local STATUS_CELL = { done = 0, log = 1, available = 2, locked = 3, repeated = 4 }
 
--- The cell for a quest's status: the gold "!" of an available quest turns green for a repeatable done at least once.
+-- The cell for a quest's status: the green check of a done quest turns blue for a repeatable one (done at least once).
 local function StatusCell(status, id)
-  if status == "available" and id and Data.RepeatableDone(id) then return STATUS_CELL.again end
+  if status == "done" and id and Data.IsRepeatable(id) then return STATUS_CELL.repeated end
   return STATUS_CELL[status]
 end
 
@@ -55,7 +55,9 @@ local MarkGraphSelection -- (set below) lights the box of the quest whose detail
 local ShowEmptyPane -- (set below) the details pane with nothing selected: a hint
 local popup, popupFor -- the details pane, and the quest whose details it shows (nil: none)
 local rows, iconPool = {}, {}
-local current, notice, results, backTo
+local current, notice, results
+local hist, shownText = {}, "" -- the views you came through (newest last), and the search box's text as the view on screen had it
+local Remember, CanBack, BackLabel -- (set below) the Back button's history
 local zoneMode, zonePick, zoneNotice, lastZoneShown -- the Zones tab
 local wantHere -- the window was just opened: the Zones tab should show the area you are standing in
 local zoneIndex -- the Zones tab shows the list of all zones (instead of one zone)
@@ -757,11 +759,7 @@ local function GetRow(i)
       local mode = (IsShiftKeyDown and IsShiftKeyDown() and "end") or (IsAltKeyDown and IsAltKeyDown() and "start") or nil
       WaypointFor(self, mode)
     elseif not current and results then
-      -- Picked from a list: remember it so Back returns there.
-      local saved = { results = results, notice = notice }
-      UI.Open(self.questId, false, true)
-      backTo = saved
-      Render()
+      UI.Open(self.questId, false, true) -- (the list is remembered, so Back returns to it)
     elseif popupFor == self.questId then
       popupFor = nil; ShowEmptyPane() -- the selected quest again: let go of it
     else
@@ -1492,7 +1490,6 @@ local function TurnInSegments(id)
 end
 
 local function RenderLog()
-  frame.back:Hide()
   frame.toggle:Hide()
   frame.title:SetText("My quest log")
   local groups, total, ready = Data.QuestLog()
@@ -1697,6 +1694,7 @@ local function RenderZoneIndex()
         row.name:SetText((z.area == here and "|cffffd100" or "|cffffffff") .. z.name .. "|r" .. (z.area == here and "  |cff9a9488you are here|r" or ""))
         row.xp:ClearAllPoints(); row.xp:SetPoint("TOPRIGHT", -108, -7); row.xp:SetWidth(70)
         row.onClick = function()
+          Remember()
           ZS().area = z.area
           zoneIndex, zonePick, zoneNotice, popupFor = false, nil, nil, nil
           Render()
@@ -1721,9 +1719,6 @@ end
 
 local function RenderZone()
   Zones = Zones or ns.Zones
-  frame.back:SetShown(not zoneIndex)
-  frame.back.text:SetText("All zones")
-  frame.back:SetWidth(90)
   frame.toggle:Show()
   SyncGroupTabs()
   if Data.state == "error" or Zones.state == "error" then
@@ -1784,7 +1779,7 @@ local function RenderZone()
     frame.stats:SetText("")
     for _, z in ipairs(zonePick) do
       local row = header(z.name .. "  |cff808080" .. z.count .. " quests|r")
-      row.onClick = function() ZS().area = z.area; zonePick, zoneNotice, popupFor = nil, nil, nil; Render() end
+      row.onClick = function() Remember(); ZS().area = z.area; zonePick, zoneNotice, popupFor = nil, nil, nil; Render() end
     end
     return finish(nil)
   end
@@ -1991,11 +1986,65 @@ local function RenderZone()
   finish(area)
 end
 
+-- ---- the Back button: the views you came through ----
+-- A view is the tab, the zone (or the list of zones), the chain, the search list, and what the search box held.
+local function Snap()
+  return { zoneMode = zoneMode and true or false, logMode = logMode and true or false, zoneIndex = zoneIndex and true or false,
+    zonePick = zonePick, zoneNotice = zoneNotice, area = ZS().area, current = current, results = results, notice = notice,
+    popupFor = popupFor, text = shownText, logFilter = logFilter,
+    scroll = scroll and scroll:GetVerticalScroll() or 0 }
+end
+
+local function SameView(a, b)
+  if a.zoneMode ~= b.zoneMode or a.logMode ~= b.logMode then return false end
+  if a.zoneMode then
+    if a.zoneIndex ~= b.zoneIndex or a.zonePick ~= b.zonePick then return false end
+    return a.zoneIndex or a.area == b.area -- (the index has no area)
+  end
+  if a.logMode then return true end
+  return a.current == b.current and a.results == b.results
+end
+
+-- Called before the window goes somewhere else: the view it leaves joins the trail (not twice in a row).
+Remember = function()
+  if not frame or not frame:IsShown() then return end
+  local s = Snap()
+  local top = hist[#hist]
+  if top and SameView(top, s) then return end
+  hist[#hist + 1] = s
+  if #hist > 30 then table.remove(hist, 1) end
+end
+
+-- The view Back would go to: the newest one on the trail that is not the one on screen.
+local function BackTarget()
+  local cur = Snap()
+  for i = #hist, 1, -1 do
+    if not SameView(hist[i], cur) then return hist[i], i end
+  end
+end
+
+CanBack = function()
+  if BackTarget() then return true end
+  return zoneMode and not zoneIndex and not zonePick and true or false -- a zone you opened on: back is the list of zones
+end
+
+BackLabel = function()
+  local t = BackTarget()
+  if t then
+    if t.zoneMode and t.zoneIndex and not t.zonePick then return "All zones", 90 end
+    return "Back", 58
+  end
+  if zoneMode and not zoneIndex then return "All zones", 90 end
+  return "Back", 58
+end
+
 function Render()
   if not frame then return end
-  frame.back:SetShown(current ~= nil and backTo ~= nil)
-  frame.back.text:SetText("Back")
-  frame.back:SetWidth(58)
+  shownText = frame.box:GetText() or ""
+  frame.back:SetShown(CanBack())
+  local backText, backW = BackLabel()
+  frame.back.text:SetText(backText)
+  frame.back:SetWidth(backW)
   indexJob = nil
   SetProgress()
   -- the list is the default body; the graph view swaps it for the canvas
@@ -2085,7 +2134,7 @@ function Render()
       e.xpExact = exact ~= nil
       e.xp = exact or (maxed and 0 or Core.ScaledXp(e.xpBase, e.xpLevel, level))
       local base = Data.Status(e.id)
-      e.status, e.unmet = Core.StatusOf(e, base == "done", base == "log", Data.IsDone, level, nameOf)
+      e.status, e.unmet = Core.StatusOf(e, base == "done", base == "log", Data.DoneOnce, level, nameOf)
       all[#all + 1] = e
       totalXp = totalXp + e.xp
     end
@@ -2153,7 +2202,7 @@ function Render()
       -- Lead-ins: optional quests that start this one earlier, so they come first. They are not counted in the totals above.
       for _, c in ipairs(e.crumbs or {}) do
         local base = Data.Status(c.id)
-        c.status, c.unmet = Core.StatusOf(c, base == "done", base == "log", Data.IsDone, level, nameOf)
+        c.status, c.unmet = Core.StatusOf(c, base == "done", base == "log", Data.DoneOnce, level, nameOf)
         local over = (e.status == "done" or e.status == "log") and c.status ~= "done" and c.status ~= "log"
         local cSub
         if over then
@@ -2227,7 +2276,7 @@ function Render()
       if rep then
         if rep.done then
           idColor = "|cff4fe04f"
-          tag = "  |cff7be07bRepeatable · done" .. (rep.count > 0 and (" " .. rep.count .. "x") or "") .. "|r"
+          tag = "  |cff6fb6ffRepeatable · done" .. (rep.count > 0 and (" " .. rep.count .. "x") or "") .. "|r"
         else
           tag = "  |cff9aa0a8Repeatable|r"
         end
@@ -2410,17 +2459,7 @@ local function Create()
   back:SetPoint("RIGHT", f.tabChain, "LEFT", -8, 0)
   back:SetScript("OnShow", function() f.version:Hide() end)
   back:SetScript("OnHide", function() f.version:Show() end)
-  back:SetScript("OnClick", function()
-    if zoneMode then -- in a zone: back to the list of zones
-      zoneIndex, zonePick, zoneNotice, popupFor = true, nil, nil, nil
-      Render()
-      return
-    end
-    if not backTo then return end
-    current, results, notice = nil, backTo.results, backTo.notice
-    backTo = nil
-    Render()
-  end)
+  back:SetScript("OnClick", function() UI.Back() end)
   back:Hide()
   f.back = back
 
@@ -2756,6 +2795,7 @@ local function Create()
     Normalize(f)
     box:SetText("")
     logFilter = nil
+    hist = {} -- a window that was closed starts without a trail
     hint:SetShown(true)
     box:ClearFocus()
   end)
@@ -2784,16 +2824,41 @@ local function SetModeControls()
   SyncGroupTabs()
 end
 
+-- Back: to the view you came from (and from there on, one step at a time).
+function UI.Back()
+  if not frame then return end
+  local s, i = BackTarget()
+  if not s then
+    if zoneMode and not zoneIndex then -- opened straight on a zone: back is the list of zones
+      zoneIndex, zonePick, zoneNotice, popupFor = true, nil, nil, nil
+      Render()
+    end
+    return
+  end
+  for k = #hist, i, -1 do table.remove(hist, k) end
+  zoneMode, logMode, zoneIndex, zonePick, zoneNotice = s.zoneMode, s.logMode, s.zoneIndex, s.zonePick, s.zoneNotice
+  if s.area then ZS().area = s.area end
+  current, results, notice, popupFor = s.current, s.results, s.notice, s.popupFor
+  SetModeControls()
+  frame.box:SetText(s.text or "")
+  logFilter = s.logFilter
+  frame.hideSuggest()
+  Render()
+  local max = math.max(0, content:GetHeight() - scroll:GetHeight())
+  scroll:SetVerticalScroll(math.min(max, s.scroll or 0))
+  UpdateThumb()
+end
+
 -- showObjectives: a click on a quest, which also opens the objectives popup for it.
 function UI.Open(questId, keepBack, showObjectives)
   Create()
   local fresh = not frame:IsShown()
+  if not keepBack then Remember() end -- (keepBack: a click inside the chain on screen, which is not a new view)
   if questId then zoneMode, logMode = false, false end
   SetModeControls()
   current = questId and tonumber(questId) or current
   popupFor = showObjectives and current or nil
   notice, results = nil, nil
-  if not keepBack then backTo = nil end
   if fresh and zoneMode then wantHere, zonePick, zoneNotice = true, nil, nil end -- the Zones tab opens on your own area
   frame:Show()
   frame:Raise()
@@ -2806,13 +2871,14 @@ end
 function UI.OpenIds(ids)
   if #ids <= 1 then return UI.Open(ids[1]) end
   Create()
+  Remember()
   local hits = {}
   for _, id in ipairs(ids) do hits[#hits + 1] = { id = id, name = Data.Name(id) or ("Quest " .. id) } end
   table.sort(hits, function(a, b)
     if a.name ~= b.name then return a.name < b.name end
     return a.id < b.id
   end)
-  current, results, notice, backTo, popupFor = nil, hits, ("%d quests share that icon."):format(#ids), nil, nil
+  current, results, notice, popupFor = nil, hits, ("%d quests share that icon."):format(#ids), nil
   zoneMode, logMode = false, false
   SetModeControls()
   frame:Show()
@@ -2825,7 +2891,8 @@ end
 function UI.OpenText(text)
   Create()
   local id, msg, hits = Data.Resolve(text)
-  backTo, popupFor = nil, nil
+  Remember()
+  popupFor = nil
   zoneMode, logMode = false, false
   SetModeControls()
   if not id then
@@ -2844,6 +2911,7 @@ end
 -- The Chains tab.
 function UI.ShowChains()
   Create()
+  Remember()
   zoneMode, logMode, zonePick, popupFor = false, false, nil, nil
   SetModeControls()
   Render()
@@ -2852,6 +2920,7 @@ end
 -- The Zones tab, on an area (or the one you left it on, or the one you stand in).
 function UI.ShowZones(area)
   Create()
+  Remember()
   Zones = Zones or ns.Zones
   local fresh = not frame:IsShown()
   zoneMode, logMode, zonePick, zoneNotice, popupFor = true, false, nil, nil, nil
@@ -2875,6 +2944,7 @@ function UI.OpenZoneText(text)
   Create()
   Zones = Zones or ns.Zones
   text = tostring(text or ""):match("^%s*(.-)%s*$")
+  Remember()
   zoneMode, logMode, zoneIndex, popupFor = true, false, false, nil
   SetModeControls()
   frame:Show()
@@ -2904,6 +2974,7 @@ end
 -- The My Log tab: your own quest log.
 function UI.ShowLog()
   Create()
+  Remember()
   zoneMode, logMode, zonePick, popupFor = false, true, nil, nil
   SetModeControls()
   frame:Show()

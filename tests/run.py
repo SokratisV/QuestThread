@@ -905,7 +905,12 @@ D.RecordTurnIn(166)
 D.RecordTurnIn(166)
 G.SlashCmdList["QUESTTHREAD"]("166")
 r166 = chain_row(166)
-check("... and once it is done at least once, the green ! cell", r166.entry.status == "available" and abs(r166.status._tc[1] - 4 * CELLW) < 1e-9 and abs(r166.status._tc[2] - 5 * CELLW) < 1e-9, (r166.entry.status, r166.status._tc))
+check("... and once it is done at least once, it is done, with the blue check cell", r166.entry.status == "done" and abs(r166.status._tc[1] - 4 * CELLW) < 1e-9 and abs(r166.status._tc[2] - 5 * CELLW) < 1e-9, (r166.entry.status, r166.status._tc))
+check("a repeatable quest done once counts as done for the chain's progress (Data.Status)", D.Status(166) == "done" and D.DoneOnce(166), D.Status(166))
+prev_idx = G.C_QuestLog.GetLogIndexForQuestID
+G.C_QuestLog.GetLogIndexForQuestID = lua.eval("function(id) if id == 166 then return 1 end end")
+check("... unless it is in your log again: then it is in the log", D.Status(166) == "log", D.Status(166))
+G.C_QuestLog.GetLogIndexForQuestID = prev_idx
 G.C_QuestLog.IsQuestFlaggedCompleted = prev_done
 G.SlashCmdList["QUESTTHREAD"]("166")
 r166 = chain_row(166)
@@ -1223,22 +1228,30 @@ kwin = G.QuestThreadFrame if False else next(f for f in G.stubs.values() if f._n
 loose = [f.name._text for f in G.stubs.values() if f._shown and f.entry is None and f.questId is None and f.name is not None and f.name._text
          and not f.name._text.startswith("Item rewards")]
 check("rows without a quest (reputation, breadcrumbs) carry no old name text", not loose, loose[:3])
-check("no Back button when the chain was not picked from a list", kwin.back._shown is False)
+kwin.Hide(kwin); kwin.Show(kwin)  # a window that was just opened has no trail
+G.SlashCmdList["QUESTTHREAD"]("166")
+check("a chain opened with nothing before it has no Back button", kwin.back._shown is False)
 G.SlashCmdList["QUESTTHREAD"]("defias")
+check("a search after it has a Back button (to the chain)", kwin.back._shown is True)
 pick = [f for f in G.stubs.values() if f._shown and f.questId and f.entry is None and f.name is not None and "#" in (f.name._text or "")][0]
 pick._scripts["OnClick"](pick, "LeftButton")
-check("picking from a list shows a Back button", kwin.back._shown is True)
-G.SlashCmdList["QUESTTHREAD"]("")
+check("picking from the list shows a Back button", kwin.back._shown is True)
 kwin.back._scripts["OnClick"](kwin.back)
 back_rows = [f for f in G.stubs.values() if f._shown and f.questId and f.entry is None and f.name is not None and "#" in (f.name._text or "")]
-check("Back returns to the same list", len(back_rows) >= 2 and kwin.back._shown is False, len(back_rows))
-pick = back_rows[0]
+check("Back returns to the same list, and the trail goes on from there", len(back_rows) >= 2 and kwin.back._shown is True, len(back_rows))
+kwin.back._scripts["OnClick"](kwin.back)
+back_chain = [f for f in G.stubs.values() if f._shown and f.entry is not None]
+check("Back again returns to the chain, the first view, and the button goes", len(back_chain) >= 8 and kwin.back._shown is False, len(back_chain))
+G.SlashCmdList["QUESTTHREAD"]("defias")
+pick = [f for f in G.stubs.values() if f._shown and f.questId and f.entry is None and f.name is not None and "#" in (f.name._text or "")][0]
 pick._scripts["OnClick"](pick, "LeftButton")
 chain_row = next(f for f in G.stubs.values() if f._shown and f.entry is not None and f.questId != pick.questId)
 chain_row._scripts["OnClick"](chain_row, "LeftButton")
 check("Back is still there after moving around inside the chain", kwin.back._shown is True)
+kwin.back._scripts["OnClick"](kwin.back)
+check("... and one Back from inside the chain goes to the list, not to each quest clicked", any(f._shown and f.questId and f.entry is None and "#" in (f.name._text or "") for f in G.stubs.values() if f.name is not None and f.name._text))
 G.SlashCmdList["QUESTTHREAD"]("166")
-check("opening a quest another way clears Back", kwin.back._shown is False)
+check("opening a quest another way keeps the trail", kwin.back._shown is True)
 
 # ---- Ctrl+click on a reward item opens the dressing room ----
 G.dressed = lua.table()
@@ -1781,6 +1794,15 @@ check("a skipped step names the later step", any("Skipped: you already did a lat
 check("the chain with a late step done is a missed chain, not done", ev_late.chain[c65].status != "done" and ev_late.chain[c65].counts.missed > 0)
 G.C_QuestLog.IsQuestFlaggedCompleted = lua.eval("function(id) return id == 65 end")
 check("the chain with a finished step is not done and has a count", ev.chain[c65].status != "done" and ev.chain[c65].counts.done >= 1, dict(ev.chain[c65].counts))
+# a repeatable quest in the chain (166), done once, does not leave the chain looking unfinished
+G.C_QuestLog.IsQuestFlaggedCompleted = lua.eval("function(id) return id ~= 166 end")
+ev_rep = Z.Evaluate(m12)
+check("(setup) the chain's only open quest is the repeatable 166, never done", ev_rep.chain[c65].status == "available" and ev_rep.quest[166].status == "available", (ev_rep.chain[c65].status, ev_rep.quest[166].status))
+G.QuestThreadDB.turnedIn = lua.table_from({166: 1})
+ev_rep = Z.Evaluate(m12)
+check("once the repeatable has been done at least once the chain is done, not incomplete", ev_rep.chain[c65].status == "done" and ev_rep.quest[166].status == "done" and ev_rep.chain[c65].counts.done == len(list(c65.ids.values())), (ev_rep.chain[c65].status, dict(ev_rep.chain[c65].counts)))
+G.QuestThreadDB.turnedIn = None
+G.C_QuestLog.IsQuestFlaggedCompleted = lua.eval("function(id) return id == 65 end")
 G.UnitLevel = lua.eval("function() return 60 end")
 ev60 = Z.Evaluate(m12)
 outl = [i for i in all_ids if (ev60.quest[i].greyNote or "").startswith("Outleveled")]
@@ -2125,7 +2147,7 @@ irows = zone_rows()
 ihead = [r for r in irows if r.fold._shown]
 check("the Zones tab lists every zone, split by continent: Eastern Kingdoms first, Other last",
       mainwin.title._text == "Zones" and [r.name._text for r in ihead] == ["|cffffd100Eastern Kingdoms|r", "|cffffd100Other|r"], [r.name._text for r in ihead])
-check("the list has no Back button and no chips", not mainwin.back._shown and not any(f._shown and f.key is not None and f.label is not None for f in G.stubs.values()))
+check("the list has no chips (and Back to where you were)", mainwin.back._shown and not any(f._shown and f.key is not None and f.label is not None for f in G.stubs.values()))
 elw = next(r for r in irows if "Elwynn Forest" in r.name._text and not r.fold._shown)
 check("Elwynn Forest is under Eastern Kingdoms, marked as where you are", ihead[0]._pt[5] > elw._pt[5] > -10 ** 6 and elw._pt[5] > ihead[1]._pt[5] and "you are here" in elw.name._text, (ihead[0]._pt, elw._pt, ihead[1]._pt))
 check("the zones' numbers are worked out after the list is up: a placeholder first", "…" in elw.xp._text, elw.xp._text)
@@ -2148,7 +2170,17 @@ elw._scripts["OnClick"](elw, "LeftButton")
 check("clicking a zone opens it like a search does", mainwin.title._text == "Elwynn Forest" and any(c.key == "available" for c in chips()))
 check("the zone view has an All zones button back", mainwin.back._shown and mainwin.back.text._text == "All zones", mainwin.back.text._text)
 mainwin.back._scripts["OnClick"](mainwin.back)
-check("All zones goes back to the list", mainwin.title._text == "Zones" and not mainwin.back._shown)
+check("All zones goes back to the list", mainwin.title._text == "Zones")
+# the whole trail: all zones -> a zone -> its chain, and back out one step at a time
+ns2.UI.OpenZoneText("elwynn")
+zrow = next((r for r in zone_rows() if r.entry is not None and r.chain._shown), None)
+check("(setup) a zone row with a chain-link icon", zrow is not None)
+zrow.chain._scripts["OnClick"](zrow.chain)
+check("the chain icon opens the chain, and Back is offered", mainwin.back._shown and not mainwin.toggle._shown and mainwin.back.text._text == "Back", (mainwin.back.text._text,))
+mainwin.back._scripts["OnClick"](mainwin.back)
+check("Back from the chain returns to the zone (Elwynn Forest), with the zone's tabs", mainwin.title._text == "Elwynn Forest" and mainwin.toggle._shown and mainwin.back.text._text == "All zones", mainwin.title._text)
+mainwin.back._scripts["OnClick"](mainwin.back)
+check("Back again returns to the list of all zones", mainwin.title._text == "Zones" and any(r.fold._shown for r in zone_rows()))
 ns2.UI.OpenZoneText("elwynn")
 check("searching for a zone still opens it (from the list too)", mainwin.title._text == "Elwynn Forest" and mainwin.back._shown)
 mainwin.tabZone._scripts["OnClick"](mainwin.tabZone)

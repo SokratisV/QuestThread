@@ -175,9 +175,14 @@ function Data.IsDone(id)
   return C_QuestLog and C_QuestLog.IsQuestFlaggedCompleted and C_QuestLog.IsQuestFlaggedCompleted(id) and true or false
 end
 
+local repeatableCache = {} -- the flags of a quest never change
 function Data.IsRepeatable(id)
+  local hit = repeatableCache[id]
+  if hit ~= nil then return hit end
   local ok, flags = pcall(function() return QuestDB and QuestDB.specialFlags and QuestDB.specialFlags(id) end)
-  return ok and Core.IsRepeatable(flags) or false
+  hit = ok and Core.IsRepeatable(flags) or false
+  if QuestDB then repeatableCache[id] = hit end -- (not before the database is there)
+  return hit
 end
 
 -- Does Questie's My Journey log a completion of this quest? (Questie is optional.)
@@ -538,13 +543,20 @@ function Data.OpenInQuestLog(id)
   return true
 end
 
--- "done", "log", or nil.
+-- "done", "log", or nil. A repeatable quest you have completed at least once is done (unless it is in your log again),
+-- so a chain with one in it is not left looking unfinished.
 function Data.Status(id)
   if C_QuestLog then
     if C_QuestLog.IsQuestFlaggedCompleted and C_QuestLog.IsQuestFlaggedCompleted(id) then return "done" end
     if C_QuestLog.GetLogIndexForQuestID and C_QuestLog.GetLogIndexForQuestID(id) then return "log" end
   end
+  if Data.RepeatableDone(id) then return "done" end
   return nil
+end
+
+-- Has the quest been completed (a repeatable one: at least once)? For the "finish this first" tests.
+function Data.DoneOnce(id)
+  return Data.IsDone(id) or Data.RepeatableDone(id)
 end
 
 -- Is this quest only a breadcrumb (it exists to lead into another quest)?

@@ -4,7 +4,7 @@
   cell 1  in log      blue disc, question mark
   cell 2  available   gold disc, exclamation mark
   cell 3  locked      red disc, padlock
-  cell 4  again       green disc, exclamation mark (a repeatable quest you have already completed once)
+  cell 4  repeated    blue disc, check mark (a repeatable quest you have already completed once)
   cell 5  badge       dark disc, amber ring (behind the letter of an optional quest)
   cells 6-7 are empty (the sheet is a power of two wide)
 
@@ -30,10 +30,10 @@ STYLES = [
     ((40, 92, 150), (16, 40, 72), (196, 222, 255)),     # in log
     ((178, 140, 20), (82, 62, 6), (255, 240, 170)),     # available
     ((150, 52, 52), (66, 22, 22), (255, 206, 206)),     # locked
-    ((47, 128, 66), (20, 58, 30), (222, 250, 228)),     # again
+    ((38, 122, 196), (14, 50, 90), (214, 236, 255)),    # repeated
     ((27, 21, 14), (150, 110, 44), (224, 166, 74)),     # badge (a plain disc: the letter is text on top)
 ]
-GLYPHS = [0, 1, 2, 3, 2, None]  # the glyph drawn in each cell: check, ?, !, lock, !, none
+GLYPHS = [0, 1, 2, 3, 0, None]  # the glyph drawn in each cell: check, ?, !, lock, check, none
 
 
 def seg_d(px, py, a, b):

@@ -338,7 +338,7 @@ end
 local function missedContext(level)
   local green = GetQuestGreenRange and GetQuestGreenRange() or 8
   return {
-    isDone = Data.IsDone,
+    isDone = Data.DoneOnce,
     inLog = function(id) return Data.Status(id) == "log" end,
     nexts = Data.index.nexts,
     info = infoOf,
@@ -361,7 +361,7 @@ function Zones.Evaluate(model)
     local s = quest[id]
     if s then return s end
     local base = Data.Status(id)
-    local status, unmet = Core.StatusOf(infoOf(id), base == "done", base == "log", Data.IsDone, level, nameOf)
+    local status, unmet = Core.StatusOf(infoOf(id), base == "done", base == "log", Data.DoneOnce, level, nameOf)
     local detail, greyNote = unmet, nil
     if status == "available" or status == "locked" then
       local reason, kind = Core.MissedReason(id, ctx)
