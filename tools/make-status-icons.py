@@ -1,4 +1,4 @@
-"""Draws Status.tga: the step-status icons side by side, 256x32 (eight 32x32 cells, six drawn), 32-bit TGA.
+"""Draws Status.tga: the step-status icons side by side, 256x32 (eight 32x32 cells, seven drawn), 32-bit TGA.
 
   cell 0  done        green disc, check mark
   cell 1  in log      blue disc, question mark
@@ -6,7 +6,8 @@
   cell 3  locked      red disc, padlock
   cell 4  repeated    blue disc, check mark (a repeatable quest you have already completed once)
   cell 5  badge       dark disc, amber ring (behind the letter of an optional quest)
-  cells 6-7 are empty (the sheet is a power of two wide)
+  cell 6  marked      violet disc, pencil (a repeatable quest the player marked as done by hand)
+  cell 7 is empty (the sheet is a power of two wide)
 
   python -I tools/make-status-icons.py              writes Status.tga next to the addon's TOC
   python -I tools/make-status-icons.py preview.png  also writes a 4x PNG preview
@@ -32,8 +33,9 @@ STYLES = [
     ((150, 52, 52), (66, 22, 22), (255, 206, 206)),     # locked
     ((38, 122, 196), (14, 50, 90), (214, 236, 255)),    # repeated
     ((27, 21, 14), (150, 110, 44), (224, 166, 74)),     # badge (a plain disc: the letter is text on top)
+    ((112, 78, 178), (44, 28, 86), (236, 228, 255)),    # marked by hand
 ]
-GLYPHS = [0, 1, 2, 3, 0, None]  # the glyph drawn in each cell: check, ?, !, lock, check, none
+GLYPHS = [0, 1, 2, 3, 0, None, 4]  # the glyph drawn in each cell: check, ?, !, lock, check, none, pencil
 
 
 def seg_d(px, py, a, b):
@@ -66,6 +68,11 @@ def glyph(kind, px, py):
         return poly(px, py, arc, 2.9) or dot(px, py, (16, 23), 1.8)
     if kind == 2:  # exclamation mark
         return poly(px, py, [(16, 8.5), (16, 18)], 3.6) or dot(px, py, (16, 22.6), 2.0)
+    if kind == 4:  # pencil: a slanted body, a pointed tip, a line it writes on
+        body = poly(px, py, [(21.4, 8.6), (13.6, 16.4)], 4.6)
+        tip = poly(px, py, [(13.6, 16.4), (10.6, 21.4)], 2.2) or poly(px, py, [(12.6, 18.2), (11, 21)], 3.4)
+        line = poly(px, py, [(13, 24.6), (23, 24.6)], 1.8)
+        return body or tip or line
     # padlock: shackle, body, keyhole cut out
     shackle = poly(px, py, [(12.6, 15.5), (12.6, 12.6), (14, 10.2), (16, 9.4), (18, 10.2), (19.4, 12.6), (19.4, 15.5)], 2.3)
     body = round_rect(px, py, 10, 15, 22, 24, 1.6)

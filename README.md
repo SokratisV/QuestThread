@@ -73,6 +73,11 @@ tabs, the search box with its magnifier, the quest or zone you are looking at wi
   status icon turns from the gold "!" to a **blue check mark**, and it counts as **done** everywhere: in a chain's
   progress (a chain whose only open quest is a repeatable you have done once is shown as done, not incomplete), in a
   zone's totals, and for the quests that need it first. If it is in your quest log again it shows as in your log.
+  The game keeps no record of repeatable turn-ins, so ones from before QuestThread was installed are unknown: click
+  the quest and press the **Mark as done** button at the top right of its details pane (the button then reads
+  **Unmark**). A quest marked by hand gets its own **violet pencil** icon and the tag "Repeatable · marked done"; it
+  counts as done like any other. A turn-in QuestThread sees, or one in Questie's journey, needs no mark (and the
+  usual blue check wins over the pencil).
 - Every quest shows its **ID** (grey, after the name). **Hover a quest and press Ctrl+C** (in the chain or in a
   list of results) and a small box appears with its **Wowhead link** already selected; the copy closes it, and so
   does Escape. This works like Wowhead Quick Link and is only listening while the mouse is on a quest and you are
@@ -125,7 +130,10 @@ the list. The numbers are worked out a few zones at a time, so they fill in over
 **Back** (top right, left of the tabs) retraces your steps one view at a time: from a chain back to the zone you
 opened it from, from the zone back to the list of all zones (the button then says "All zones"), from a quest picked in
 a search list back to that list. It covers tabs, zone searches and chain openings; clicking quests inside a chain is
-not a step. The trail starts afresh each time the window opens.
+not a step. The trail starts afresh each time the window opens. **Mouse button 4** goes Back while the pointer is over the window, whatever you have it bound to elsewhere: the
+window takes that one button only while the pointer is over it and gives it back the moment the pointer leaves
+(nothing is rebound, and it waits for combat to end before changing anything). Back also has an optional key anywhere
+(Key Bindings > QuestThread), which does nothing while the window is closed.
 
 Inside a zone, the tab lists every quest that **starts** in it, whatever chain it belongs to. A quest also counts for the zone your quest log files it under, so a quest you hold always
 shows under its own zone's **In log** chip, even when its giver stands in another zone or has no known spawn. Pick a zone by typing its name, or open it from a zone link (**Ctrl+click** a blue zone

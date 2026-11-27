@@ -621,11 +621,12 @@ check("each row's status icon is the cell for its status", len(with_entry) >= 8 
 check("the sheet cells are an eighth wide", all(abs(f.status._tc[2] - f.status._tc[1] - CELLW) < 1e-9 for f in with_entry))
 sheet = open(os.path.join(ROOT, "Status.tga"), "rb").read()
 sw, sh, sdepth = struct.unpack("<HHB", sheet[12:17])
-check("Status.tga is 256x32, 32-bit, uncompressed, with the fifth (green !) and sixth (badge) cells drawn and the seventh empty",
+check("Status.tga is 256x32, 32-bit, uncompressed, with the blue check, badge and pencil cells drawn and the last empty",
       (sw, sh, sdepth) == (256, 32, 32) and sheet[2] == 2 and len(sheet) == 18 + 256 * 32 * 4
       and max(sheet[18 + 3 + 4 * (y * 256 + x)] for y in range(32) for x in range(128, 160)) == 255
       and max(sheet[18 + 3 + 4 * (y * 256 + x)] for y in range(32) for x in range(160, 192)) == 255
-      and max(sheet[18 + 3 + 4 * (y * 256 + x)] for y in range(32) for x in range(192, 224)) == 0, (sw, sh, sdepth))
+      and max(sheet[18 + 3 + 4 * (y * 256 + x)] for y in range(32) for x in range(192, 224)) == 255
+      and max(sheet[18 + 3 + 4 * (y * 256 + x)] for y in range(32) for x in range(224, 256)) == 0, (sw, sh, sdepth))
 locked_rows = [f for f in with_entry if f.entry.status == "locked"]
 check("locked rows say what they need on a second line", locked_rows and all(f.sub._text.find("Needs:") >= 0 and f.sub._shown for f in locked_rows), len(locked_rows))
 plain = [f for f in with_entry if f.entry.status != "locked" and f.entry.id != 166]
@@ -927,6 +928,59 @@ r166 = chain_row(166)
 check("done according to Questie's journey only: no count", "Repeatable · done" in r166.name._text and "x" not in r166.name._text.split("done")[1].split("|")[0], r166.name._text)
 G.Questie = None
 G.QuestThreadDB.turnedIn = None
+
+# ---- marking a repeatable quest as done by hand (for turn-ins from before QuestThread) ----
+def pane():
+    return frame_named("QuestThreadObjectives")
+
+
+def mark_btn():
+    return pane().mark
+
+
+G.SlashCmdList["QUESTTHREAD"]("166")
+r166 = chain_row(166)
+r166._scripts["OnClick"](r166, "LeftButton")
+mb = mark_btn()
+check("the pane of a repeatable quest nothing has recorded has a Mark as done button", mb._shown and mb.text._text == "Mark as done" and mb.value is True and mb.questId == 166, (mb._shown, mb.text._text))
+check("(setup) it is not done before", not D.RepeatableDone(166) and not D.MarkedOnly(166))
+G.tipLines = lua.table()
+r166._scripts["OnEnter"](r166)
+check("the quest's tooltip tells where to mark it", any("Mark as done" in str(v) for v in G.tipLines.values()), list(G.tipLines.values())[:8])
+mb._scripts["OnClick"](mb)
+check("clicking it records the mark and the quest counts as done", D.RepeatableDone(166) and D.Status(166) == "done" and G.QuestThreadDB.marked[166] is True)
+check("... and it is marked only (nothing else shows it was done)", D.MarkedOnly(166) and D.RepeatInfo(166).markedOnly)
+r166 = chain_row(166)
+check("the row's tag says it was marked by hand", "Repeatable · marked done" in r166.name._text and "|cffb59cff" in r166.name._text, r166.name._text)
+check("... with its own violet pencil icon (cell 6)", abs(r166.status._tc[1] - 6 * CELLW) < 1e-9 and abs(r166.status._tc[2] - 7 * CELLW) < 1e-9, r166.status._tc)
+G.tipLines = lua.table()
+r166._scripts["OnEnter"](r166)
+check("the tooltip says it was marked by you", "Repeatable, marked as done by you" in list(G.tipLines.values()), list(G.tipLines.values())[:6])
+mb = mark_btn()
+check("the pane says so, and the button now reads Unmark", mb._shown and mb.text._text == "Unmark" and mb.value is False and "Marked done by you" in pane().sub._text, (mb.text._text, pane().sub._text))
+mb._scripts["OnClick"](mb)
+check("Unmark takes the mark back: not done again", not D.RepeatableDone(166) and G.QuestThreadDB.marked[166] is None)
+check("... and the button offers Mark as done again", mark_btn()._shown and mark_btn().text._text == "Mark as done")
+mark_btn()._scripts["OnClick"](mark_btn())
+D.RecordTurnIn(166)
+check("a real turn-in on top of a mark: the usual blue check, not the pencil", D.RepeatableDone(166) and not D.MarkedOnly(166))
+G.SlashCmdList["QUESTTHREAD"]("166")
+r166 = chain_row(166)
+check("... the row is the blue check with the usual tag", abs(r166.status._tc[1] - 4 * CELLW) < 1e-9 and "Repeatable · done" in r166.name._text, (r166.status._tc, r166.name._text))
+mark_btn()._scripts["OnClick"](mark_btn())  # unmark
+G.QuestThreadDB.turnedIn = None
+r166 = chain_row(166)
+r166._scripts["OnClick"](r166, "LeftButton"); r166._scripts["OnClick"](r166, "LeftButton")  # let go, pick again
+D.RecordTurnIn(166)
+ns2.UI.Open(166, True, True)
+check("a repeatable quest already known to be done has no button", not mark_btn()._shown)
+G.QuestThreadDB.turnedIn = None
+other = next(f for f in G.stubs.values() if f._shown and f.entry is not None and f.entry.id != 166)
+other._scripts["OnClick"](other, "LeftButton")
+check("a normal quest has no mark button", not mark_btn()._shown)
+check("a normal quest cannot be marked", D.MarkRepeatable(501, True) is False and not (G.QuestThreadDB.marked and G.QuestThreadDB.marked[501]))
+other._scripts["OnClick"](other, "LeftButton")  # let go
+check("with nothing selected there is no button", not mark_btn()._shown)
 
 # ---- who you are: the professions you have learned ----
 G.GetProfessions = lua.eval("function() return 1, 2, nil, 4 end")
@@ -1252,6 +1306,103 @@ kwin.back._scripts["OnClick"](kwin.back)
 check("... and one Back from inside the chain goes to the list, not to each quest clicked", any(f._shown and f.questId and f.entry is None and "#" in (f.name._text or "") for f in G.stubs.values() if f.name is not None and f.name._text))
 G.SlashCmdList["QUESTTHREAD"]("166")
 check("opening a quest another way keeps the trail", kwin.back._shown is True)
+
+# ---- the Back key, and mouse button 4 over the window ----
+bx = open(os.path.join(ROOT, "Bindings.xml"), encoding="utf-8").read()
+check("Bindings.xml declares the Back action and runs QuestThread_Back",
+      'name="QUESTTHREAD_BACK"' in bx and "QuestThread_Back()" in bx)
+check("the binding has a readable name in the key bindings list", G.BINDING_NAME_QUESTTHREAD_BACK == "QuestThread: Back")
+kwin.Hide(kwin); kwin.Show(kwin)  # a window that was just opened has no trail
+G.SlashCmdList["QUESTTHREAD"]("166"); G.SlashCmdList["QUESTTHREAD"]("defias")
+pick = [f for f in G.stubs.values() if f._shown and f.questId and f.entry is None and f.name is not None and "#" in (f.name._text or "")][0]
+pick._scripts["OnClick"](pick, "LeftButton")  # trail: chain, list
+G.QuestThread_Back()
+check("the Back key goes one step back, like the button (to the list)",
+      kwin.back._shown is True and any(f._shown and f.questId and f.entry is None and "#" in (f.name._text or "") for f in G.stubs.values() if f.name is not None and f.name._text))
+G.QuestThread_Back()
+check("the next press goes back again, to the chain, and the trail is used up",
+      kwin.back._shown is False and len([f for f in G.stubs.values() if f._shown and f.entry is not None]) >= 8)
+G.SlashCmdList["QUESTTHREAD"]("defias")  # trail: chain
+check("(setup) the trail has a step", kwin.back._shown is True)
+kwin._shown = False
+G.QuestThread_Back()
+check("with the window closed the Back key does nothing", kwin.back._shown is True)
+kwin._shown = True
+
+# mouse button 4 over the window: an override binding while the pointer is there, gone when it leaves
+lua.execute("""
+  overrides, cleared = {}, 0
+  SetOverrideBindingClick = function(owner, prio, key, btn, mb) overrides[#overrides + 1] = { owner = owner, prio = prio, key = key, btn = btn, mb = mb } end
+  ClearOverrideBindings = function(owner) cleared = cleared + 1 end
+  mouseOver = false
+""")
+kwin.IsMouseOver = lua.eval("function() return mouseOver end")
+bk = frame_named("QuestThreadBackKey")
+check("a hidden helper button exists for the binding to click", bk is not None and bk._scripts["OnClick"] is not None and bk._scripts["OnUpdate"] is not None)
+bk._scripts["OnUpdate"](bk, 0.2)
+check("with the pointer elsewhere nothing is overridden", len(G.overrides) == 0 and G.cleared == 0)
+G.mouseOver = True
+bk._scripts["OnUpdate"](bk, 0.02)
+check("the pointer is looked at a few times a second, not every frame", len(G.overrides) == 0)
+bk._scripts["OnUpdate"](bk, 0.2)
+ov = G.overrides[1]
+check("over the window, mouse button 4 is overridden to click the helper (priority, so it beats other bindings)",
+      len(G.overrides) == 1 and ov.key == "BUTTON4" and ov.btn == "QuestThreadBackKey" and ov.prio is True and lua.eval("function(a, b) return a == b end")(ov.owner, kwin), (ov.key, ov.btn, ov.prio))
+bk._scripts["OnUpdate"](bk, 0.2)
+check("... once, not on every look", len(G.overrides) == 1)
+bk._scripts["OnClick"](bk, "LeftButton")
+check("the click goes Back like the button (to the chain; the trail is used up)", kwin.back._shown is False)
+# the press itself is watched too (the game may give it to a binding first, or a button under the pointer may take it)
+lua.execute("testTime = 100; GetTime = function() return testTime end")
+G.SlashCmdList["QUESTTHREAD"]("defias")  # trail: chain
+check("(setup) the trail has a step again", kwin.back._shown is True)
+G.testMouse = True
+bk._scripts["OnUpdate"](bk, 0.0)
+check("pressing the button over the window goes Back", kwin.back._shown is False)
+G.SlashCmdList["QUESTTHREAD"]("defias")
+bk._scripts["OnUpdate"](bk, 0.0)
+check("holding it down is not another step", kwin.back._shown is True)
+G.testMouse = False
+bk._scripts["OnUpdate"](bk, 0.0)
+G.testTime = 101
+G.testMouse = True
+bk._scripts["OnUpdate"](bk, 0.0)
+check("pressing it again is the next step", kwin.back._shown is False)
+G.testMouse = False
+bk._scripts["OnUpdate"](bk, 0.0)
+G.SlashCmdList["QUESTTHREAD"]("defias")
+G.testTime = 102
+G.testMouse = True
+bk._scripts["OnUpdate"](bk, 0.0)  # the poll sees the press ...
+G.SlashCmdList["QUESTTHREAD"]("defias")
+bk._scripts["OnClick"](bk, "LeftButton")  # ... and the override's click is the same press, in the same frame
+check("a press seen by both the poll and the override is one step", kwin.back._shown is True)
+G.testMouse = False
+bk._scripts["OnUpdate"](bk, 0.0)
+mouse_was = G.mouseOver
+G.mouseOver = False
+G.testTime = 103
+G.testMouse = True
+bk._scripts["OnUpdate"](bk, 0.0)
+check("pressing it with the pointer elsewhere does nothing", kwin.back._shown is True)
+G.testMouse = False
+bk._scripts["OnUpdate"](bk, 0.0)
+G.mouseOver = mouse_was
+G.mouseOver = False
+bk._scripts["OnUpdate"](bk, 0.2)
+check("when the pointer leaves the window the override is cleared, so the player's own binding is back", G.cleared == 1)
+G.mouseOver = True
+G.testCombat = True
+bk._scripts["OnUpdate"](bk, 0.2)
+check("in combat no binding is changed", len(G.overrides) == 1)
+G.testCombat = False
+kwin._scripts["OnEvent"](kwin, "PLAYER_REGEN_ENABLED")
+check("when combat ends it is set if the pointer is over the window", len(G.overrides) == 2)
+kwin._scripts["OnHide"](kwin)
+check("closing the window clears it", G.cleared == 2)
+G.mouseOver = False
+kwin.IsMouseOver = None
+kwin._shown = True
 
 # ---- Ctrl+click on a reward item opens the dressing room ----
 G.dressed = lua.table()
@@ -2017,6 +2168,7 @@ G.ForeverDungeonJournal_NS = None
 r166 = chain_row(166)
 ns2.UI.Open(166, True, True)  # (clicking the selected quest would let go of it)
 check("without the journal the popup shows no dungeon link", not any(b._shown and b.link.kind == "dungeon" for r in popup().linkRows.values() for b in r.links.values()))
+G.QuestThreadDB.turnedIn = None
 G.SlashCmdList["QUESTTHREAD"]("")
 
 # ---- the Zones tab ----

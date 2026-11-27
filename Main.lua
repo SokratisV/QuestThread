@@ -254,6 +254,14 @@ SlashCmdList["QUESTTHREAD"] = function(msg)
   end
 end
 
+-- ---- the Back key (Key Bindings > QuestThread; Bindings.xml runs QuestThread_Back) ----
+-- An optional key that goes Back from anywhere; it does nothing while the window is closed. (Mouse button 4 goes
+-- Back over the window without any binding: see the window's code in UI.lua.)
+_G.BINDING_NAME_QUESTTHREAD_BACK = "QuestThread: Back"
+function _G.QuestThread_Back()
+  if UI.IsShown() then UI.Back() end
+end
+
 local ev = CreateFrame("Frame")
 ev:RegisterEvent("PLAYER_LOGIN")
 ev:RegisterEvent("PLAYER_ENTERING_WORLD")

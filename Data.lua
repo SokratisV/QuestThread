@@ -195,21 +195,50 @@ local function JourneyHas(id)
   return false
 end
 
--- A repeatable quest is never flagged completed for good, so "done at least once" comes from three places:
--- turn-ins QuestThread has seen itself, the game's flag (dailies and weeklies while it lasts), and Questie's journey.
-function Data.RepeatableDone(id)
-  if not Data.IsRepeatable(id) then return false end
+-- Did the player mark this repeatable as done by hand? (For turn-ins from before QuestThread, which nothing recorded.)
+local function Marked(id)
+  local m = QuestThreadDB and QuestThreadDB.marked
+  return m and m[id] and true or false
+end
+
+-- Marks (on) or unmarks (off) a repeatable quest as done by hand; false when it is not a repeatable quest.
+function Data.MarkRepeatable(id, on)
+  if type(id) ~= "number" or not Data.IsRepeatable(id) then return false end
+  QuestThreadDB = QuestThreadDB or {}
+  if on then
+    QuestThreadDB.marked = QuestThreadDB.marked or {}
+    QuestThreadDB.marked[id] = true
+  elseif QuestThreadDB.marked then
+    QuestThreadDB.marked[id] = nil
+  end
+  return true
+end
+
+-- Proof that a repeatable quest was done, other than the player's own mark: turn-ins QuestThread has seen itself,
+-- the game's flag (dailies and weeklies while it lasts), and Questie's journey.
+local function Recorded(id)
   local seen = QuestThreadDB and QuestThreadDB.turnedIn
   if seen and seen[id] then return true end
   return Data.IsDone(id) or JourneyHas(id)
 end
 
+-- A repeatable quest is never flagged completed for good, so "done at least once" is the player's mark or a record.
+function Data.RepeatableDone(id)
+  if not Data.IsRepeatable(id) then return false end
+  return Marked(id) or Recorded(id)
+end
+
+-- Done only because the player said so (nothing else shows it was done).
+function Data.MarkedOnly(id)
+  return Data.IsRepeatable(id) and Marked(id) and not Recorded(id)
+end
+
 -- nil for a normal quest; for a repeatable one { done = completed at least once, count = turn-ins seen by
--- QuestThread (0 when it only knows it was done, e.g. from Questie's journey) }.
+-- QuestThread (0 when it only knows it was done, e.g. from Questie's journey), marked = the player marked it done }.
 function Data.RepeatInfo(id)
   if not Data.IsRepeatable(id) then return nil end
   local seen = QuestThreadDB and QuestThreadDB.turnedIn
-  return { done = Data.RepeatableDone(id), count = seen and seen[id] or 0 }
+  return { done = Data.RepeatableDone(id), count = seen and seen[id] or 0, marked = Marked(id), markedOnly = Data.MarkedOnly(id) }
 end
 
 -- Called on QUEST_TURNED_IN; only repeatable quests are remembered.

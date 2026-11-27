@@ -1,0 +1,6 @@
+<!-- Key bindings: the game's Key Bindings > QuestThread. The name shown is set in Main.lua.
+     Back goes to the view before, like the Back button in the window, from anywhere. (Over the window, mouse
+     button 4 goes Back by itself, whatever it is bound to elsewhere.) -->
+<Bindings>
+	<Binding name="QUESTTHREAD_BACK" category="QuestThread">QuestThread_Back()</Binding>
+</Bindings>

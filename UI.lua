@@ -18,14 +18,16 @@ local ICON = 22
 local FLAT = "Interface\\Buttons\\WHITE8X8"
 -- Step status icons: four 32x32 cells in one sheet (tools/make-status-icons.py).
 local STATUS_TEX = "Interface\\AddOns\\QuestThread\\Status.tga"
--- Status.tga is eight 32-px cells side by side (six drawn). "repeated" is the blue check of a repeatable quest you have
--- already completed once.
+-- Status.tga is eight 32-px cells side by side (seven drawn). "repeated" is the blue check of a repeatable quest you have
+-- already completed once; "marked" is the violet pencil of one you marked as done yourself (nothing else shows it).
 local STATUS_CELLS = 8
-local STATUS_CELL = { done = 0, log = 1, available = 2, locked = 3, repeated = 4 }
+local STATUS_CELL = { done = 0, log = 1, available = 2, locked = 3, repeated = 4, marked = 6 }
 
 -- The cell for a quest's status: the green check of a done quest turns blue for a repeatable one (done at least once).
 local function StatusCell(status, id)
-  if status == "done" and id and Data.IsRepeatable(id) then return STATUS_CELL.repeated end
+  if status == "done" and id and Data.IsRepeatable(id) then
+    return Data.MarkedOnly(id) and STATUS_CELL.marked or STATUS_CELL.repeated
+  end
   return STATUS_CELL[status]
 end
 
@@ -312,9 +314,15 @@ local function ShowQuestTip(row)
   local rep = Data.RepeatInfo(e.id)
   if rep then
     if rep.done then
-      GameTooltip:AddLine("Repeatable, completed " .. (rep.count > 1 and (rep.count .. " times") or (rep.count == 1 and "once" or "at least once")), 0.44, 0.88, 0.44)
+      if rep.markedOnly then
+        GameTooltip:AddLine("Repeatable, marked as done by you", 0.71, 0.61, 1)
+      else
+        local times = rep.count > 1 and (rep.count .. " times") or (rep.count == 1 and "once") or "at least once"
+        GameTooltip:AddLine("Repeatable, completed " .. times, 0.44, 0.88, 0.44)
+      end
     else
       GameTooltip:AddLine("Repeatable", 0.6, 0.63, 0.66)
+      GameTooltip:AddLine("Done it before? Click the quest, then Mark as done.", 0.6, 0.63, 0.66, true)
     end
   end
   for _, line in ipairs(e.unmet or {}) do GameTooltip:AddLine(line, 1, 0.5, 0.5, true) end
@@ -558,11 +566,22 @@ local function TextWidth(text)
 end
 
 local function HintFor(link)
+  if link.kind == "mark" then
+    return link.value and "Click: remember this repeatable quest as done (turn-ins from before QuestThread were not recorded)"
+      or "Click: forget your mark, so the quest shows as not done again"
+  end
   if link.kind == "dungeon" then return "Click: open this quest in the Dungeon Journal (" .. link.name .. ")" end
   return "Click: open the map on " .. Data.ZoneName(link.area) .. " - Ctrl+click: the quests that start there"
 end
 
 local function Activate(link)
+  if link.kind == "mark" then
+    if Data.MarkRepeatable(link.id, link.value) then
+      if ns.Zones then ns.Zones.ResetProgress() end
+      Render()
+    end
+    return
+  end
   if link.kind == "zone" and IsControlKeyDown and IsControlKeyDown() then return UI.ShowZones(link.area) end
   local ok, msg
   if link.kind == "dungeon" then ok, msg = Data.OpenInJournal(link.id) else ok, msg = Data.OpenMapAt(link.area) end
@@ -1025,6 +1044,20 @@ local function BuildPopup()
   popup.hint:SetWordWrap(true)
   popup.hint:SetPoint("CENTER", popup, "CENTER", 0, 30); popup.hint:SetWidth(POP_W - 60)
   popup.hint:SetText("Select a quest to see its objectives, rewards and where to go")
+  -- A repeatable quest nothing has recorded as done can be marked by hand (and the mark taken back): a button at the
+  -- top right of the pane.
+  popup.mark = Button(popup, "Mark as done", 96, 22)
+  popup.mark:SetPoint("TOPRIGHT", -14, -10)
+  popup.mark:Hide()
+  popup.mark:SetScript("OnClick", function(self)
+    Activate({ kind = "mark", id = self.questId, value = self.value })
+  end)
+  popup.mark:HookScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
+    GameTooltip:AddLine(HintFor({ kind = "mark", value = self.value }), 0.56, 0.77, 1, true)
+    GameTooltip:Show()
+  end)
+  popup.mark:HookScript("OnLeave", function() GameTooltip:Hide() end)
   popup.textRows, popup.itemRows, popup.linkRows = {}, {}, {}
   -- the details scroll inside the pane
   popup.scroll = CreateFrame("ScrollFrame", nil, popup)
@@ -1156,7 +1189,16 @@ local function ShowObjectives(id)
   end
   local base = Data.Status(id) -- the same test the rows use for "in your log"
   local state = (base == "done" or Data.RepeatableDone(id)) and "done" or base == "log" and "log" or "new"
-  bits[#bits + 1] = state == "done" and "|cff66cc66Completed|r" or state == "log" and "|cff8fc4ffIn your quest log|r" or "|cffcccccc#" .. id .. "|r"
+  local rep = Data.RepeatInfo(id)
+  popup.mark.questId = id
+  if rep and (rep.marked or not rep.done) then
+    popup.mark.value = not rep.marked
+    popup.mark.text:SetText(rep.marked and "Unmark" or "Mark as done")
+    popup.mark:Show()
+  else
+    popup.mark:Hide()
+  end
+  bits[#bits + 1] = (rep and rep.markedOnly) and "|cffb59cffMarked done by you|r" or state == "done" and "|cff66cc66Completed|r" or state == "log" and "|cff8fc4ffIn your quest log|r" or "|cffcccccc#" .. id .. "|r"
   if Data.IsBreadcrumb(id) then
     local to = Data.BreadcrumbTarget(id)
     bits[#bits + 1] = "|cffe0a64aBreadcrumb" .. (to and (" to " .. (Data.Name(to) or ("quest " .. to))) or "") .. "|r"
@@ -1175,7 +1217,7 @@ end
 ShowEmptyPane = function()
   if not popup then return end
   popup.empty = true
-  popup.title:Hide(); popup.sub:Hide(); popup.rule:Hide(); popup.scroll:Hide(); popup.thumb:Hide()
+  popup.title:Hide(); popup.sub:Hide(); popup.rule:Hide(); popup.scroll:Hide(); popup.thumb:Hide(); popup.mark:Hide()
   popup.hint:Show()
   if MarkGraphSelection then MarkGraphSelection() end
 end
@@ -2274,7 +2316,10 @@ function Render()
       local idColor, tag = "|cff808080", ""
       local rep = Data.RepeatInfo(e.id)
       if rep then
-        if rep.done then
+        if rep.markedOnly then
+          idColor = "|cff4fe04f"
+          tag = "  |cffb59cffRepeatable · marked done|r"
+        elseif rep.done then
           idColor = "|cff4fe04f"
           tag = "  |cff6fb6ffRepeatable · done" .. (rep.count > 0 and (" " .. rep.count .. "x") or "") .. "|r"
         else
@@ -2773,8 +2818,13 @@ local function Create()
   if UISpecialFrames then table.insert(UISpecialFrames, "QuestThreadFrame") end
   -- Typing focus (the search box) also swallows WASD, so let go of it when combat starts.
   f:RegisterEvent("PLAYER_REGEN_DISABLED")
+  f:RegisterEvent("PLAYER_REGEN_ENABLED")
   f:RegisterEvent("QUEST_LOG_UPDATE")
   f:SetScript("OnEvent", function(_, event)
+    if event == "PLAYER_REGEN_ENABLED" then
+      f.armBack(f:IsShown() and f:IsMouseOver() and true or false) -- (what combat held back)
+      return
+    end
     if event == "QUEST_LOG_UPDATE" then
       -- My Log follows your quest log (it fires a lot: take it again shortly, once)
       if logMode and f:IsShown() and not logPending then
@@ -2789,7 +2839,40 @@ local function Create()
   -- A click anywhere else takes the typing focus off the search box, or WASD would type into it.
   f:SetScript("OnMouseDown", function() box:ClearFocus() end)
   -- Closing the window ends any hover, so the key listener and the link box go with it.
-  f:SetScript("OnHide", function() hoverRow = nil; ListenForKeys(false); HideLink(); f.hideSuggest(); f.releaseBar() end)
+  f:SetScript("OnHide", function() hoverRow = nil; ListenForKeys(false); HideLink(); f.hideSuggest(); f.releaseBar(); f.armBack(false) end)
+  -- Mouse button 4 goes Back while the pointer is over the window, whatever the player has it bound to elsewhere.
+  -- The press itself is watched (a click on a button of the window never reaches the window, and the game may give
+  -- the press to a binding first). So the player's own action on that button does not also fire over the window, an
+  -- override binding for it is set while the pointer is over the window and cleared when it leaves (bindings can't
+  -- change in combat; a change waits for it). The override's click is the same Back; one press is one step.
+  local backKey = CreateFrame("Button", "QuestThreadBackKey", f)
+  backKey:SetSize(1, 1)
+  backKey:RegisterForClicks("AnyDown")
+  local lastBack
+  local function GoBack()
+    local now = GetTime and GetTime()
+    if now and now == lastBack then return end
+    lastBack = now
+    if f:IsShown() then UI.Back() end
+  end
+  backKey:SetScript("OnClick", GoBack)
+  local armed, since, wasDown = false, 0, false
+  f.armBack = function(on)
+    if on == armed then return end
+    if InCombatLockdown and InCombatLockdown() then return end
+    armed = on
+    if on then SetOverrideBindingClick(f, true, "BUTTON4", "QuestThreadBackKey", "LeftButton")
+    else ClearOverrideBindings(f) end
+  end
+  backKey:SetScript("OnUpdate", function(_, dt)
+    local down = IsMouseButtonDown and IsMouseButtonDown("Button4") and true or false
+    if down and not wasDown and f:IsMouseOver() then GoBack() end
+    wasDown = down
+    since = since + dt
+    if since < 0.1 then return end
+    since = 0
+    f.armBack(f:IsMouseOver() and true or false)
+  end)
   -- Every time the window opens the search box starts empty (what you typed last time is not what you want now).
   f:SetScript("OnShow", function()
     Normalize(f)
