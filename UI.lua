@@ -8,7 +8,7 @@ ns.UI = UI
 
 -- The window: a column WIDTH wide (header, search, list), and, while a quest's details are open, a pane PANE_W wide
 -- on its right (the window grows to hold it).
-local WIDTH, HEIGHT, PANE_W = 540, 680, 310
+local WIDTH, HEIGHT, PANE_W = 600, 680, 310
 local CONTENT_W = WIDTH - 48
 local TOGGLE_W = 220 -- the By type | By giver | Breadcrumbs tabs
 local VIEW_W = 137 -- the List | Graph tabs of the chain view
@@ -68,6 +68,7 @@ local indexJob -- the list's progress numbers being worked out a few zones per f
 local collapsed = {} -- [area:giver] or [area:section:name] = true for a giver / section folded shut
 local PLUS_ICON, MINUS_ICON = "Interface\\Buttons\\UI-PlusButton-Up", "Interface\\Buttons\\UI-MinusButton-Up"
 local Render -- defined below; the row click handlers need it
+local needsPending, holdScroll = {}, nil -- items the game has not described yet ([id] = true); a scroll position to keep through the next render
 
 local function Say(msg) print("|cffffd100QuestThread:|r " .. msg) end
 
@@ -204,12 +205,63 @@ local function HereWidth()
   return hereWidth
 end
 
+-- Marks on an item a chain needs: the quest "!" (a quest item) and the vendor's bag (a vendor buys or sells it).
+local QUEST_MARK, COIN_MARK = "Interface\\GossipFrame\\AvailableQuestIcon", "Interface\\MoneyFrame\\UI-GoldIcon"
+-- Where a quest is picked up (the yellow "!") and where it is handed in (the yellow "?"), as inline icons for text.
+local PICKUP_ICON = "|T" .. QUEST_MARK .. ":14:14|t "
+local TURNIN_ICON = "|TInterface\\GossipFrame\\ActiveQuestIcon:14:14|t "
+
+-- The tooltip of an item a chain needs: the item itself, which quests ask for it, where it drops, and whether
+-- (and for how much) it can be had at the auction house.
+local function ShowNeedTip(owner, need)
+  GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
+  GameTooltip:SetHyperlink("item:" .. need.id)
+  local names = {}
+  for i, q in ipairs(need.quests) do
+    if i > 4 then names[#names + 1] = "+" .. (#need.quests - 4); break end
+    names[#names + 1] = Data.Name(q) or ("Quest " .. q)
+  end
+  GameTooltip:AddLine(" ")
+  GameTooltip:AddLine("Needed for: " .. table.concat(names, ", "), 1, 0.82, 0, true)
+  if #need.from > 0 then GameTooltip:AddLine("Drops from: " .. table.concat(need.from, ", "), 0.8, 0.8, 0.8, true) end
+  local t = need.trade
+  if t and t.quest then GameTooltip:AddLine("|T" .. QUEST_MARK .. ":14:14|t Quest item", 1, 0.82, 0) end
+  if t and t.buy then
+    GameTooltip:AddLine("|T" .. COIN_MARK .. ":12:12|t Sold by vendors" .. (#t.vendors > 0 and (": " .. table.concat(t.vendors, ", ")) or ""), 0.9, 0.8, 0.5, true)
+  end
+  if t and t.sells then GameTooltip:AddLine("|T" .. COIN_MARK .. ":12:12|t A vendor pays " .. Core.Money(t.sells), 0.9, 0.8, 0.5) end
+  if t == nil then
+    GameTooltip:AddLine("Auction house: checking...", 0.6, 0.6, 0.6)
+  elseif not t.ah then
+    GameTooltip:AddLine("Not on the auction house (quest item or soulbound)", 0.6, 0.6, 0.6, true)
+  elseif t.price then
+    GameTooltip:AddLine("Auction house: " .. Core.Money(t.price) .. " each (Auctionator)", 0.4, 1, 0.4)
+  elseif Data.HasAuctionator() then
+    GameTooltip:AddLine("Can be bought on the auction house (Auctionator has no price yet)", 0.4, 1, 0.4, true)
+  else
+    GameTooltip:AddLine("Can be bought on the auction house (install Auctionator for prices)", 0.4, 1, 0.4, true)
+  end
+  GameTooltip:Show()
+end
+
 local function GetIconButton(parent)
   for _, b in ipairs(iconPool) do
     if not b.inUse then b.inUse = true; b:SetParent(parent); b:Show(); return b end
   end
   local b = CreateFrame("Button", nil, parent)
   b:SetSize(ICON, ICON)
+  -- a small gold coin in the corner marks an item that can be bought or sold (auction house or vendor), and a
+  -- yellow "!" a quest item (the "items you need" strip only)
+  b.badge = b:CreateTexture(nil, "OVERLAY")
+  b.badge:SetTexture(COIN_MARK)
+  b.badge:SetSize(11, 11)
+  b.badge:SetPoint("BOTTOMRIGHT", 1, -1)
+  b.badge:Hide()
+  b.qmark = b:CreateTexture(nil, "OVERLAY")
+  b.qmark:SetTexture(QUEST_MARK)
+  b.qmark:SetSize(13, 13)
+  b.qmark:SetPoint("TOPLEFT", -3, 3)
+  b.qmark:Hide()
   b.rim = Solid(b, "BACKGROUND", BRONZE[1], BRONZE[2], BRONZE[3], 1)
   b.rim:SetAllPoints()
   b.tex = b:CreateTexture(nil, "ARTWORK")
@@ -218,6 +270,7 @@ local function GetIconButton(parent)
   b:SetScript("OnEnter", function(self)
     self.rim:SetVertexColor(BRONZE_HOVER[1], BRONZE_HOVER[2], BRONZE_HOVER[3], 1)
     if not self.itemId then return end
+    if self.need then return ShowNeedTip(self, self.need) end
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
     GameTooltip:SetHyperlink("item:" .. self.itemId)
     GameTooltip:AddLine("|cff8fc4ffCtrl+click: preview in the dressing room|r")
@@ -246,12 +299,20 @@ local function ReleaseIcons(row)
 end
 
 -- Lay icons out left to right, wrapping. Returns the number of lines used.
-local function PlaceIcons(row, items, x0, y0, perLine)
+-- needs (optional): [item id] = a Data.ChainNeeds entry; those icons get the auction-house coin, the needs tooltip,
+-- and are dimmed when every quest that asks for them is done.
+local function PlaceIcons(row, items, x0, y0, perLine, needs)
   ReleaseIcons(row)
   local lines = 0
   for i, id in ipairs(items) do
     local b = GetIconButton(row)
     b.itemId = id
+    local need = needs and needs[id]
+    b.need = need
+    local tr = need and need.trade
+    b.badge:SetShown(tr ~= nil and tr.coin == true)
+    b.qmark:SetShown(tr ~= nil and tr.quest == true)
+    b.tex:SetAlpha(need and need.done and 0.4 or 1)
     b.tex:SetTexture(ItemIcon(id))
     local col, line = (i - 1) % perLine, math.floor((i - 1) / perLine)
     b:ClearAllPoints()
@@ -279,6 +340,7 @@ local function ZoneList(areas, max)
 end
 
 local function ShowQuestTip(row)
+  if row.need then return ShowNeedTip(row, row.need) end
   local e = row.entry
   if not e then
     -- A row of the search / pick list: just the name, the id and the link shortcut.
@@ -349,7 +411,7 @@ local function ShowQuestTip(row)
     for i = 1, math.min(2, #givers) do
       local g = givers[i]
       local place = Data.Locate(g, e.id)
-      GameTooltip:AddLine((which == "start" and "Starts: " or "Ends: ") .. g.name .. (place and (" — " .. Data.PlaceText(place)) or ""), 0.9, 0.9, 0.6, true)
+      GameTooltip:AddLine((which == "start" and (PICKUP_ICON .. "Starts: ") or (TURNIN_ICON .. "Ends: ")) .. g.name .. (place and (" — " .. Data.PlaceText(place)) or ""), 0.9, 0.9, 0.6, true)
     end
   end
   -- The shortcuts show only while Shift is held (the hover watcher below redraws the tip when Shift goes down or up).
@@ -514,7 +576,7 @@ end)
 -- ---- clickable places: a dungeon opens the Dungeon Journal, a zone opens the map on that area ----
 -- The "where" line of a quest as segments, or nil when nothing is known. A segment is
 -- { text, color, sep (shown after it), link = { kind = "dungeon", id, name } | { kind = "zone", area } }.
-local function WhereSegments(e)
+local function WhereSegments(e, withEnds)
   local segs = {}
   local dungeon = Data.DungeonOf(e.id)
   if dungeon then
@@ -542,11 +604,27 @@ local function WhereSegments(e)
     if w.extra > 0 then segs[#segs].sep = " +" .. w.extra end
   elseif dungeon and #w.zones > 0 then
     segs[1].sep = nil -- only the dungeon is left
-  else
+  elseif not withEnds then
     local g = Data.Givers(e.id, "end")[1]
     local place = g and Data.Locate(g, e.id)
     if place then
-      segs[#segs + 1] = { text = "Hand in: " .. Data.ZoneName(place.area, place.uiMap), link = { kind = "zone", area = place.area } }
+      segs[#segs + 1] = { text = TURNIN_ICON .. "Hand in: " .. Data.ZoneName(place.area, place.uiMap), link = { kind = "zone", area = place.area } }
+    end
+  end
+  -- withEnds (a chain row): then where it is picked up (!) and where it is handed in (?)
+  if withEnds then
+    local places = Data.EndPlaces(e.id)
+    local ends = {}
+    for _, p in ipairs({ { places.start, PICKUP_ICON }, { places.finish, TURNIN_ICON } }) do
+      local place = p[1]
+      if place then
+        ends[#ends + 1] = { text = p[2] .. Data.ZoneName(place.area, place.uiMap), link = { kind = "zone", area = place.area, ends = true }, sep = "  ·  " }
+      end
+    end
+    if #ends > 0 then
+      ends[#ends].sep = nil
+      if #segs > 0 then segs[#segs].sep = (segs[#segs].sep or "") .. "  ·  " end
+      for _, seg in ipairs(ends) do segs[#segs + 1] = seg end
     end
   end
   if #segs == 0 then return nil end
@@ -563,6 +641,21 @@ local function TextWidth(text)
   local w = measureFS:GetStringWidth()
   measureFS:SetText("")
   return type(w) == "number" and w or 0
+end
+
+-- A row's name line does not wrap, and text longer than its box runs on under the XP at the right. This cuts the name
+-- (with "...") so that before .. name .. after fits in maxW. The color codes around it take no room.
+local measureName
+local function FitName(maxW, before, name, after)
+  if not measureName then measureName = Bump(UIParent:CreateFontString(nil, "OVERLAY", "GameFontHighlight")) end
+  local function fits(n)
+    measureName:SetText(before .. n .. after)
+    local w = measureName:GetStringWidth()
+    return type(w) ~= "number" or w <= maxW
+  end
+  local out = Core.Shorten(name, fits)
+  measureName:SetText("")
+  return out
 end
 
 local function HintFor(link)
@@ -831,9 +924,9 @@ local function PlaceRow(n, y, h)
   row:SetHeight(h)
   row:Show()
   row.hl:Hide(); row.bar:Hide(); row.hover:Hide()
-  row.questId, row.entry, row.chainTip = nil, nil, nil
+  row.questId, row.entry, row.chainTip, row.need, row.zoneRewards = nil, nil, nil, nil, nil
   row.rep:Hide(); row.rep:SetWordWrap(false); row.rep:SetWidth(CONTENT_W - 40)
-  row.xp:SetText(""); row.num:SetText(""); row.name:SetText("")
+  row.xp:SetText(""); row.xp:SetWidth(104); row.num:SetText(""); row.name:SetText("")
   row.here:Hide(); row.subNormal, row.subHot = nil, nil; HideLinks(row)
   row.onClick = nil; row.status:SetDesaturated(false)
   row.tag:SetText(""); row.tag:Hide(); row.tag:ClearAllPoints(); row.tag:SetPoint("TOPRIGHT", -2, -6)
@@ -962,7 +1055,7 @@ local function ObjectivePieces(id)
     local g = Data.Givers(id, which)[1]
     if g then
       local place = Data.Locate(g, id)
-      add(Head(which == "start" and "Starts" or "Hand in") .. "  |cffffffff" .. g.name .. "|r" ..
+      add((which == "start" and PICKUP_ICON or TURNIN_ICON) .. Head(which == "start" and "Starts" or "Hand in") .. "  |cffffffff" .. g.name .. "|r" ..
         (place and ("\n   |cff8fb4c8" .. Data.PlaceText(place) .. "|r") or ""))
     end
   end
@@ -1034,7 +1127,7 @@ local function BuildPopup()
   Boxed(popup, true)
   popup:SetBackdropColor(0.02, 0.015, 0.01, 0.55)
   popup.title = Text(popup, "GameFontNormalLarge")
-  popup.title:SetPoint("TOPLEFT", 14, -12); popup.title:SetWidth(POP_W - 100)
+  popup.title:SetPoint("TOPLEFT", 14, -12); popup.title:SetWidth(POP_W - 28)
   popup.sub = Text(popup, "GameFontHighlightSmall")
   popup.sub:SetPoint("TOPLEFT", 14, -32); popup.sub:SetWidth(POP_W - 28)
   local rule = Solid(popup, "BORDER", BRONZE_MUTED[1], BRONZE_MUTED[2], BRONZE_MUTED[3], 0.6)
@@ -1045,9 +1138,9 @@ local function BuildPopup()
   popup.hint:SetPoint("CENTER", popup, "CENTER", 0, 30); popup.hint:SetWidth(POP_W - 60)
   popup.hint:SetText("Select a quest to see its objectives, rewards and where to go")
   -- A repeatable quest nothing has recorded as done can be marked by hand (and the mark taken back): a button at the
-  -- top right of the pane.
-  popup.mark = Button(popup, "Mark as done", 96, 22)
-  popup.mark:SetPoint("TOPRIGHT", -14, -10)
+  -- right end of the pane's second line (under the title, which keeps the whole width).
+  popup.mark = Button(popup, "Mark as done", 92, 18)
+  popup.mark:SetPoint("TOPRIGHT", -14, -29)
   popup.mark:Hide()
   popup.mark:SetScript("OnClick", function(self)
     Activate({ kind = "mark", id = self.questId, value = self.value })
@@ -1195,8 +1288,10 @@ local function ShowObjectives(id)
     popup.mark.value = not rep.marked
     popup.mark.text:SetText(rep.marked and "Unmark" or "Mark as done")
     popup.mark:Show()
+    popup.sub:SetWidth(POP_W - 28 - 98) -- the line's words end before the button
   else
     popup.mark:Hide()
+    popup.sub:SetWidth(POP_W - 28)
   end
   bits[#bits + 1] = (rep and rep.markedOnly) and "|cffb59cffMarked done by you|r" or state == "done" and "|cff66cc66Completed|r" or state == "log" and "|cff8fc4ffIn your quest log|r" or "|cffcccccc#" .. id .. "|r"
   if Data.IsBreadcrumb(id) then
@@ -1526,9 +1621,9 @@ local function TurnInSegments(id)
   if not g then return nil end
   local place = Data.Locate(g, id)
   if place then
-    return { { text = "Hand in: " .. g.name .. ", " .. Data.ZoneName(place.area, place.uiMap), link = { kind = "zone", area = place.area } } }
+    return { { text = TURNIN_ICON .. "Hand in: " .. g.name .. ", " .. Data.ZoneName(place.area, place.uiMap), link = { kind = "zone", area = place.area } } }
   end
-  return { { text = "Hand in: " .. g.name, color = "|cff9aa0a8" } }
+  return { { text = TURNIN_ICON .. "Hand in: " .. g.name, color = "|cff9aa0a8" } }
 end
 
 local function RenderLog()
@@ -1910,7 +2005,8 @@ local function RenderZone()
     statusIcon(row, s.status, indent, id)
     if model.chainOf[id] then row.chain:Show() end
     row.name:ClearAllPoints(); row.name:SetPoint("TOPLEFT", 46 + indent, -5); row.name:SetWidth(CONTENT_W - 46 - indent - 110)
-    row.name:SetText(Crumb(id) .. LevelTag(info.level) .. STATUS_COLOR[s.status] .. entry.name .. "|r  |cff808080#" .. id .. "|r")
+    local nb, na = Crumb(id) .. LevelTag(info.level) .. STATUS_COLOR[s.status], "|r  |cff808080#" .. id .. "|r"
+    row.name:SetText(nb .. FitName(CONTENT_W - 46 - indent - 110, nb, entry.name, na) .. na)
     if s.status == "missed" then row.tag:SetText("|cffd9a04aMissed|r"); row.tag:Show() end
     if s.greyNote then row.tag:SetText("|cff9a9488Grey|r"); row.tag:Show() end
     if sub then row.sub:ClearAllPoints(); row.sub:SetPoint("TOPLEFT", 46 + indent, -23); row.sub:SetText(sub); row.sub:Show() end
@@ -1924,7 +2020,8 @@ local function RenderZone()
     row.questId, row.entry, row.onClick = c.entry, entry, ZoneRowClick
     statusIcon(row, ce.status, 0)
     row.name:ClearAllPoints(); row.name:SetPoint("TOPLEFT", 46, -5); row.name:SetWidth(CONTENT_W - 46 - 130)
-    row.name:SetText(LevelTag(c.minLevel or info.level) .. STATUS_COLOR[ce.status] .. c.name .. "|r  |cff808080#" .. c.entry .. "|r")
+    local nb, na = LevelTag(c.minLevel or info.level) .. STATUS_COLOR[ce.status], "|r  |cff808080#" .. c.entry .. "|r"
+    row.name:SetText(nb .. FitName(CONTENT_W - 46 - 130, nb, c.name, na) .. na)
     row.chain:Show()
     local CHAIN_WORD = { done = "completed", log = "in your log", available = "has quests you can take", missed = "has missed quests", locked = "locked" }
     local tip = { { "Chain of " .. #c.ids .. " quests: " .. ce.counts.done .. " done, " .. (CHAIN_WORD[ce.status] or ce.status), 0.82, 0.82, 0.9 } }
@@ -1958,6 +2055,52 @@ local function RenderZone()
     local row = header(text, count, nil, open)
     row.onClick = function() collapsed[fk] = open or nil; Render() end
     return open
+  end
+
+  -- Rewards of the quests the chosen chip shows: one strip of every reward item, folding shut with its header.
+  -- With the All chip the completed quests can be left out (the default: what you already earned is not what you are
+  -- after); the other chips never include completed quests, except Done, which is about them.
+  do
+    local hideDone = filter == "all" and not ZS().keepDone
+    local seen, items, withItems = {}, {}, 0
+    for _, id in ipairs(visible(model.quests)) do
+      if (not crumbsOnly or Data.IsBreadcrumb(id)) and not (hideDone and ev.quest[id].status == "done") then
+        local list = Data.index.rewards[id]
+        if list and #list > 0 then
+          withItems = withItems + 1
+          for _, item in ipairs(list) do
+            if not seen[item] then seen[item] = true; items[#items + 1] = item end
+          end
+        end
+      end
+    end
+    table.sort(items)
+    local OF = { available = "available", log = "in your log", missed = "missed", done = "completed", all = "all" }
+    local title = "Rewards of " .. (OF[filter] or "these") .. " quests" .. (crumbsOnly and " (breadcrumbs)" or "")
+    local open = not ZS().rewardsClosed
+    local head = header(title, #items == 0 and "none" or (#items .. (#items == 1 and " item" or " items") .. " from " .. withItems .. (withItems == 1 and " quest" or " quests")), nil, open)
+    head.zoneRewards = true
+    head.onClick = function() ZS().rewardsClosed = open or nil; Render() end
+    if open then
+      if filter == "all" then
+        local tog = nextRow(22)
+        tog.zoneRewards = true
+        tog.name:ClearAllPoints(); tog.name:SetPoint("TOPLEFT", 8, -4); tog.name:SetWidth(CONTENT_W - 16)
+        tog.name:SetText(hideDone and "|cff9aa0a8Completed quests are left out.|r  |cffe0a64aShow them|r"
+          or "|cff9aa0a8Completed quests are included.|r  |cffe0a64aLeave them out|r")
+        tog.onClick = function() ZS().keepDone = hideDone or nil; Render() end
+      end
+      if #items == 0 then
+        local none = nextRow(26)
+        none.zoneRewards = true
+        none.name:ClearAllPoints(); none.name:SetPoint("TOPLEFT", 8, -5); none.name:SetWidth(CONTENT_W - 16)
+        none.name:SetText("|cff9aa0a8No item rewards recorded in QuestieDB for these quests.|r")
+      else
+        local strip = nextRow(8 + math.ceil(#items / 16) * (ICON + 3))
+        strip.zoneRewards = true
+        PlaceIcons(strip, items, 4, -4, 16)
+      end
+    end
   end
 
   local shown = 0
@@ -2088,6 +2231,7 @@ function Render()
   frame.back.text:SetText(backText)
   frame.back:SetWidth(backW)
   indexJob = nil
+  needsPending = {}
   SetProgress()
   -- the list is the default body; the graph view swaps it for the canvas
   scroll:Show()
@@ -2230,6 +2374,85 @@ function Render()
   else
     PlaceIcons(summary, itemList, 4, -22, 16)
   end
+
+  -- Items the chain asks you to collect (every quest's item objectives): a strip like the rewards above, a coin on
+  -- the ones that can be bought or sold (auction house or vendor), a "!" on quest items; a click on the strip opens
+  -- the list with prices.
+  local needs = Data.ChainNeeds(all)
+  if #needs > 0 then
+    local needIds, needMap, ahCount, coinCount, unknown = {}, {}, 0, 0, 0
+    for _, nd in ipairs(needs) do
+      nd.trade = Data.ItemTrade(nd.id)
+      if nd.trade == nil then unknown = unknown + 1; needsPending[nd.id] = true
+      else
+        if nd.trade.ah then ahCount = ahCount + 1 end
+        if nd.trade.coin then coinCount = coinCount + 1 end
+      end
+      needIds[#needIds + 1] = nd.id
+      needMap[nd.id] = nd
+    end
+    local open = DB().needsOpen and true or false
+    local lines = math.max(1, math.ceil(#needIds / 16))
+    local strip = nextRow(22 + lines * (ICON + 3) + 8)
+    strip.name:SetText(("Items you need across the chain  |cff9aa0a8%d item%s%s%s|r"):format(
+      #needIds, #needIds == 1 and "" or "s",
+      coinCount > 0 and (", " .. coinCount .. " can be bought or sold") or "", unknown > 0 and " · checking..." or ""))
+    strip.name:SetWidth(CONTENT_W - 10 - 80)
+    strip.name:ClearAllPoints(); strip.name:SetPoint("TOPLEFT", 4, -5)
+    strip.tag:SetText(open and "|cffe0a64aHide list|r" or "|cffe0a64aShow list|r"); strip.tag:Show()
+    strip.onClick = function()
+      DB().needsOpen = not open
+      holdScroll = scroll:GetVerticalScroll()
+      Render()
+    end
+    PlaceIcons(strip, needIds, 4, -22, 16, needMap)
+    if open then
+      local priced, total = 0, 0
+      for _, nd in ipairs(needs) do
+        local t = nd.trade
+        local row = nextRow(32)
+        row.need = nd
+        local icon = ItemIcon(nd.id)
+        row.name:ClearAllPoints(); row.name:SetPoint("TOPLEFT", 10, -5); row.name:SetWidth(CONTENT_W - 10 - 170)
+        row.xp:SetWidth(160)
+        row.name:SetText("|T" .. icon .. ":16:16:0:-1|t " .. (nd.done and "|cff8a9a8c" or "|cffffffff") .. nd.name .. "|r")
+        local qn = {}
+        for i, q in ipairs(nd.quests) do
+          if i > 3 then qn[#qn + 1] = "+" .. (#nd.quests - 3); break end
+          qn[#qn + 1] = Data.Name(q) or ("Quest " .. q)
+        end
+        row.sub:ClearAllPoints(); row.sub:SetPoint("TOPLEFT", 28, -21)
+        row.sub:SetText("|cff9aa0a8For: " .. table.concat(qn, " · ") .. "|r"); row.sub:Show()
+        local marks = ""
+        if t and t.quest then marks = marks .. "|T" .. QUEST_MARK .. ":14:14|t " end
+        if t and t.coin then marks = marks .. "|T" .. COIN_MARK .. ":12:12|t " end
+        if t == nil then
+          row.xp:SetText("|cff9aa0a8...|r")
+        elseif t.quest then
+          row.xp:SetText(marks .. "|cffffd100quest item|r")
+        elseif not t.ah then
+          row.xp:SetText(marks .. "|cff9aa0a8not on the AH|r")
+        elseif t.price then
+          row.xp:SetText(marks .. "|cffffd100" .. Core.Money(t.price) .. "|r")
+          priced = priced + 1; total = total + t.price
+        else
+          row.xp:SetText(marks .. "|cff4fe04fon the AH|r")
+        end
+      end
+      local foot = nextRow(56)
+      foot.rep:SetWidth(CONTENT_W - 8); foot.rep:SetWordWrap(true)
+      local line
+      if not Data.HasAuctionator() then
+        line = "Prices need Auctionator (not loaded). Counts are not in QuestieDB, so prices are per item."
+      elseif priced > 0 then
+        line = ("One of each priced item: %s (%d of %d on the AH have a price). Counts are not in QuestieDB."):format(Core.Money(total), priced, ahCount)
+      else
+        line = "Auctionator has no prices for these yet: scan the auction house. Counts are not in QuestieDB."
+      end
+      foot.rep:SetText(line .. "\n|T" .. QUEST_MARK .. ":12:12|t quest item   |T" .. COIN_MARK .. ":12:12|t can be bought or sold (auction house or vendor)")
+      foot.rep:ClearAllPoints(); foot.rep:SetPoint("TOPLEFT", 4, -5); foot.rep:Show()
+    end
+  end
   if repText ~= "" then
     local text = "Reputation: " .. repText
     local row = nextRow(10 + math.min(5, math.ceil(#text / 62)) * 13)
@@ -2254,7 +2477,7 @@ function Render()
         else
           cSub = "|cff9aa0a8Optional: leads into step " .. li .. "|r"
         end
-        local cWhere = WhereSegments(c)
+        local cWhere = WhereSegments(c, true)
         local crow = nextRow(30 + 14 + (cWhere and 14 or 0))
         crow.questId, crow.entry = c.id, c
         crow.num:SetText("»")
@@ -2268,7 +2491,8 @@ function Render()
         local cLvl = LevelTag(c.level)
         local cColor = (over or c.status == "done") and "|cff8a9a8c" or (c.status == "locked" and "|cffb4b4b4" or "|cffffffff")
         crow.tag:SetText("|cffe0a64aBreadcrumb|r"); crow.tag:Show()
-        crow.name:SetText(Crumb(c.id) .. cLvl .. cColor .. c.name .. "|r  |cff808080#" .. c.id .. "|r")
+        local nb, na = Crumb(c.id) .. cLvl .. cColor, "|r  |cff808080#" .. c.id .. "|r"
+        crow.name:SetText(nb .. FitName(CONTENT_W - 60 - 84, nb, c.name, na) .. na)
         crow.sub:ClearAllPoints(); crow.sub:SetPoint("TOPLEFT", 60, -23)
         crow.sub:SetText(cSub); crow.sub:Show()
         if cWhere then
@@ -2289,7 +2513,7 @@ function Render()
       if #(e.unmet or {}) > 0 then sub[#sub + 1] = "|cffff8a8aNeeds: " .. table.concat(e.unmet, " · ") .. "|r" end
       local subH = #sub > 0 and 14 or 0
       -- Where it happens: the zones of its kills, objects and drops (or where it is handed in).
-      local whereSegs = WhereSegments(e)
+      local whereSegs = WhereSegments(e, true)
       local whereH = whereSegs and 14 or 0
       local row = nextRow(30 + subH + whereH + (hasItems and rowLines * (ICON + 3) or 0))
       row.questId = e.id
@@ -2326,7 +2550,8 @@ function Render()
           tag = "  |cff9aa0a8Repeatable|r"
         end
       end
-      row.name:SetText(Crumb(e.id) .. lvl .. color .. e.name .. "|r  " .. idColor .. "#" .. e.id .. "|r" .. tag)
+      local nb, na = Crumb(e.id) .. lvl .. color, "|r  " .. idColor .. "#" .. e.id .. "|r" .. tag
+      row.name:SetText(nb .. FitName(CONTENT_W - 46 - ind - 84, nb, e.name, na) .. na)
       if #sub > 0 then
         row.sub:ClearAllPoints(); row.sub:SetPoint("TOPLEFT", 46 + ind, -23)
         row.sub:SetText(table.concat(sub, "  ·  ")); row.sub:Show()
@@ -2364,7 +2589,8 @@ function Render()
   content:SetHeight(math.max(y, 1))
   if popupFor then ShowObjectives(popupFor) end
 
-  local target = currentY and math.max(0, currentY - 70) or 0
+  local target = holdScroll or (currentY and math.max(0, currentY - 70) or 0)
+  holdScroll = nil
   local function scrollNow()
     local max = math.max(0, content:GetHeight() - scroll:GetHeight())
     scroll:SetVerticalScroll(math.min(target, max))
@@ -2820,7 +3046,22 @@ local function Create()
   f:RegisterEvent("PLAYER_REGEN_DISABLED")
   f:RegisterEvent("PLAYER_REGEN_ENABLED")
   f:RegisterEvent("QUEST_LOG_UPDATE")
-  f:SetScript("OnEvent", function(_, event)
+  f:RegisterEvent("GET_ITEM_INFO_RECEIVED")
+  local needsTimer, needsArrived
+  f:SetScript("OnEvent", function(_, event, itemId)
+    if event == "GET_ITEM_INFO_RECEIVED" then
+      -- an item the "items you need" strip was waiting on: draw it again shortly (once for a burst), keeping the scroll
+      if needsPending[itemId] then needsArrived = true end
+      if needsArrived and not needsTimer and f:IsShown() then
+        needsTimer = true
+        local function again()
+          needsTimer = false
+          if needsArrived and f:IsShown() then needsArrived = false; holdScroll = scroll:GetVerticalScroll(); Render() end
+        end
+        if C_Timer and C_Timer.After then C_Timer.After(0.3, again) else again() end
+      end
+      return
+    end
     if event == "PLAYER_REGEN_ENABLED" then
       f.armBack(f:IsShown() and f:IsMouseOver() and true or false) -- (what combat held back)
       return

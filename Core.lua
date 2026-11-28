@@ -588,6 +588,71 @@ function Core.Objectives(raw, trigger, L)
   return out
 end
 
+-- A name cut short (and "..." added) until fits(text) says it fits. fits is given the whole candidate name. A name
+-- that fits comes back as it is. Cuts whole UTF-8 characters.
+function Core.Shorten(name, fits)
+  if fits(name) then return name end
+  local n = name
+  while #n > 0 do
+    local i = #n -- the start of the last character: back over its continuation bytes (128 to 191)
+    while i > 1 and n:byte(i) >= 128 and n:byte(i) < 192 do i = i - 1 end
+    n = n:sub(1, i - 1)
+    if fits(n .. "...") then break end
+  end
+  return n .. "..."
+end
+
+-- The items a chain asks you to collect, each once, in the order the chain first needs them.
+-- entries: the chain's quests ({ id, status }); objsOf(id) = Core.Objectives(...) for that quest.
+-- Returns a list of { id, name, quests = {quest ids}, from = {dropper names}, done = true when every quest that
+-- needs it is already done }. QuestieDB has no counts, so there are none here.
+function Core.Needs(entries, objsOf)
+  local out, byId = {}, {}
+  for _, e in ipairs(entries) do
+    for _, o in ipairs(objsOf(e.id) or {}) do
+      if o.kind == "item" and o.id then
+        local n = byId[o.id]
+        if not n then
+          n = { id = o.id, name = o.name, quests = {}, from = {}, done = true }
+          byId[o.id] = n
+          out[#out + 1] = n
+        end
+        local seen = false
+        for _, q in ipairs(n.quests) do if q == e.id then seen = true end end
+        if not seen then n.quests[#n.quests + 1] = e.id end
+        if e.status ~= "done" then n.done = false end
+        for _, who in ipairs(o.from or {}) do
+          local have = false
+          for _, w in ipairs(n.from) do if w == who then have = true end end
+          if not have and #n.from < 3 then n.from[#n.from + 1] = who end
+        end
+      end
+    end
+  end
+  return out
+end
+
+-- Can the item go on the auction house? From the client's item info: bindType (0 none, 1 when picked up,
+-- 2 when equipped, 3 when used, 4 quest item). true, false, or nil when unknown. The item's class does not decide it:
+-- plenty of items in the "Quest" class (Morrowgrain, say) have no binding and sell at the auction house.
+function Core.Tradable(bindType)
+  if type(bindType) ~= "number" then return nil end
+  if bindType == 1 or bindType == 4 then return false end
+  return true
+end
+
+-- Copper as "1g 20s 5c" (only the parts that are not zero); "" for nothing.
+function Core.Money(copper)
+  if type(copper) ~= "number" or copper <= 0 then return "" end
+  copper = math.floor(copper + 0.5)
+  local g, s, c = math.floor(copper / 10000), math.floor(copper / 100) % 100, copper % 100
+  local parts = {}
+  if g > 0 then parts[#parts + 1] = g .. "g" end
+  if s > 0 then parts[#parts + 1] = s .. "s" end
+  if c > 0 then parts[#parts + 1] = c .. "c" end
+  return table.concat(parts, " ")
+end
+
 -- The areas across several objectives: an area scores 3, 2, 1 for being an objective's first, second
 -- or third area, and the highest scores come first. Returns at most `limit` areas and how many there are in all.
 function Core.TopAreas(objs, limit)

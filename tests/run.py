@@ -639,7 +639,8 @@ check("rows show the quest level", any("[30]" in (f._text or "") for f in G.stub
 G.tipLines = lua.table()
 entry_row._scripts["OnEnter"](entry_row)
 tip = list(G.tipLines.values())
-check("hover tooltip shows objective and start / end givers", any("Kill things." in s for s in tip) and any(s.startswith("Starts: Test Giver") for s in tip) and any(s.startswith("Ends: Test Giver") for s in tip), tip)
+check("hover tooltip shows objective and start / end givers", any("Kill things." in s for s in tip) and any(s.endswith("Starts: Test Giver") or "Starts: Test Giver" in s for s in tip) and any("Ends: Test Giver" in s for s in tip), tip)
+check("... the start line has the ! and the end line the ?", any("AvailableQuestIcon" in s and "Starts: Test Giver" in s for s in tip) and any("ActiveQuestIcon" in s and "Ends: Test Giver" in s for s in tip), tip)
 check("tooltip place text names the zone and coordinates", any("Elwynn Forest (42, 61)" in s or "Elwynn Forest (43, 61)" in s for s in tip), tip)
 entry_row._scripts["OnClick"](entry_row, "RightButton")
 pt = G.waypointCalls.point
@@ -944,6 +945,9 @@ r166._scripts["OnClick"](r166, "LeftButton")
 mb = mark_btn()
 check("the pane of a repeatable quest nothing has recorded has a Mark as done button", mb._shown and mb.text._text == "Mark as done" and mb.value is True and mb.questId == 166, (mb._shown, mb.text._text))
 check("(setup) it is not done before", not D.RepeatableDone(166) and not D.MarkedOnly(166))
+pp = pane()
+check("the button sits on the pane's second line, so the title keeps the whole width and the line's words stop before it",
+      mb._pts[1][1] == "TOPRIGHT" and mb._pts[1][2] == -14 and mb._pts[1][3] == -29 and pp.title._w2 == 302 - 28 and pp.sub._w2 == 302 - 28 - 98, ([mb._pts[1][i] for i in range(1, 6)], pp.title._w2, pp.sub._w2))
 G.tipLines = lua.table()
 r166._scripts["OnEnter"](r166)
 check("the quest's tooltip tells where to mark it", any("Mark as done" in str(v) for v in G.tipLines.values()), list(G.tipLines.values())[:8])
@@ -1106,10 +1110,10 @@ gwin.tabGraph._scripts["OnClick"](gwin.tabGraph)
 check("on a 3840-wide screen the window grows to the chain's full width", gwin._w2 == gneed + 310, (gwin._w2, gneed))
 G.UIParent.GetWidth = lua.eval("function() return 800 end")
 gwin.tabGraph._scripts["OnClick"](gwin.tabGraph)
-check("on a small screen it never goes under its normal width", gwin._w2 == 850, gwin._w2)
+check("on a small screen it never goes under its normal width", gwin._w2 == 910, gwin._w2)
 G.UIParent.GetWidth = lua.eval("function() return 1920 end")
 gwin.tabList._scripts["OnClick"](gwin.tabList)
-check("the List tab goes back to the normal width", gwin._w2 == 850, gwin._w2)
+check("the List tab goes back to the normal width", gwin._w2 == 910, gwin._w2)
 # Across | Down: the chain drawn top to bottom
 gwin.tabGraph._scripts["OnClick"](gwin.tabGraph)
 check("the graph starts Across (Across lit, Down not)", gwin.gzoom.across.plate._shown and not gwin.gzoom.down.plate._shown and G.QuestThreadDB.graphDir is None, G.QuestThreadDB.graphDir)
@@ -1134,7 +1138,7 @@ for ed in glayout.edges.values():
     if not (leaves and enters):
         missing.append((ed["from"], ed["to"], leaves, enters))
 check("every line leaves the bottom of one box and enters the top of the next", not missing, missing[:3])
-check("Down is as wide as its widest step needs, never past half the screen", gwin._w2 >= 850 and gwin._w2 <= 960, gwin._w2)
+check("Down is as wide as its widest step needs, never past half the screen", gwin._w2 >= 910 and gwin._w2 <= 1000, gwin._w2)
 gwin.gzoom.across._scripts["OnClick"](gwin.gzoom.across)
 back_pts = {f.questId: (f._pt[4], f._pt[5]) for f in G.stubs.values() if f._shown and f.cur is not None and f.meta is not None and f.questId is not None}
 check("Across brings the first layout back", back_pts == across_pts and G.QuestThreadDB.graphDir == "across", G.QuestThreadDB.graphDir)
@@ -1262,7 +1266,7 @@ G.SlashCmdList["QUESTTHREAD"]("166")
 wrows = [f for f in G.stubs.values() if f._shown and f.entry is not None and f.entry.id == 166]
 check("a chain row shows the zones of its objectives", wrows and wrows[0].where._shown and "Elwynn Forest" in wrows[0].where._text, wrows[0].where._text if wrows else None)
 other = [f for f in G.stubs.values() if f._shown and f.entry is not None and f.entry.id != 166]
-check("a quest with no objectives shows where it is handed in", other and all(f.where._shown and f.where._text.find("Hand in: ") >= 0 for f in other), [f.where._text for f in other][:2])
+check("a quest with no objectives shows where it is picked up (!) and handed in (?)", other and all(f.where._shown and "AvailableQuestIcon" in f.where._text and "ActiveQuestIcon" in f.where._text for f in other), [f.where._text for f in other][:2])
 G.tipLines = lua.table()
 wrows[0]._scripts["OnEnter"](wrows[0])
 tip = list(G.tipLines.values())
@@ -1280,7 +1284,7 @@ bad = [(len(f.name._pts), f.name._pts[1][2]) for f in chain_rows if len(f.name._
 check("chain rows put the quest name back after a search list reused them", len(chain_rows) >= 8 and not bad, bad[:3])
 kwin = G.QuestThreadFrame if False else next(f for f in G.stubs.values() if f._name == "QuestThreadFrame")
 loose = [f.name._text for f in G.stubs.values() if f._shown and f.entry is None and f.questId is None and f.name is not None and f.name._text
-         and not f.name._text.startswith("Item rewards")]
+         and not f.name._text.startswith("Item rewards") and not f.name._text.startswith("Items you need")]
 check("rows without a quest (reputation, breadcrumbs) carry no old name text", not loose, loose[:3])
 kwin.Hide(kwin); kwin.Show(kwin)  # a window that was just opened has no trail
 G.SlashCmdList["QUESTTHREAD"]("166")
@@ -1676,8 +1680,8 @@ pop = popup()
 check("clicking a quest fills the pane", pop is not None and pane_open() and not pop.hint._shown and pop.title._shown)
 mainwin = frame_named("QuestThreadFrame")
 p1 = pop._pts[1]
-check("the details pane sits inside the window, at its right", p1[1] == "TOPLEFT" and G.rawequal(p1[2], mainwin) and p1[3] == "TOPLEFT" and p1[4] == 538 and p1[5] == -58, p1)
-check("the window is the column plus the pane wide, filled or not", mainwin._w2 == 850, mainwin._w2)
+check("the details pane sits inside the window, at its right", p1[1] == "TOPLEFT" and G.rawequal(p1[2], mainwin) and p1[3] == "TOPLEFT" and p1[4] == 598 and p1[5] == -58, p1)
+check("the window is the column plus the pane wide, filled or not", mainwin._w2 == 910, mainwin._w2)
 body = popup_text()
 check("the popup shows the quest's objective text", "Kill things." in body, body)
 check("the popup lists the creature to kill and the item to collect", "Kill Test Giver" in body and "Collect Odd Thing" in body, body)
@@ -1705,6 +1709,8 @@ check("the popup has a Rewards section with the XP", "Rewards" in popup_text() a
 check("the pane's body is sized to its contents (it scrolls inside the pane)", pop.body._h is not None and pop.body._h > 100 and pop.scroll is not None, pop.body._h)
 check("the popup says where they are, and what drops the item", "Elwynn Forest" in body and "from Test Giver" in body, body)
 check("the popup says where it starts and where it is handed in", "Starts" in body and "Hand in" in body and "Test Giver" in body, body)
+check("... with the yellow ! before where it starts and the yellow ? before where it is handed in",
+      "AvailableQuestIcon" in body and "ActiveQuestIcon" in body and body.index("AvailableQuestIcon") < body.index("Starts") < body.index("ActiveQuestIcon") < body.rindex("Hand in"), body)
 check("out of the log the popup says counts come with the quest log", "once the quest is in your quest log" in body, body)
 check("the popup title is the quest name, the line under it has the level", "Giver text" not in pop.title._text and "Level 30" in pop.sub._text, (pop.title._text, pop.sub._text))
 # in the quest log: the game's own counts
@@ -1761,7 +1767,7 @@ check("the popup shows the reputation reward", "Faction81 +100" in popup_text(),
 check("(setup) the reputation quest's details are in the pane", pane_open())
 r2 = chain_row(2)
 r2._scripts["OnClick"](r2, "LeftButton")
-check("clicking the selected quest again empties the pane, which keeps its width", popup().empty and popup().hint._shown and popup()._shown and mainwin._w2 == 850, (popup().empty, mainwin._w2))
+check("clicking the selected quest again empties the pane, which keeps its width", popup().empty and popup().hint._shown and popup()._shown and mainwin._w2 == 910, (popup().empty, mainwin._w2))
 mainwin.tabChain._scripts["OnClick"](mainwin.tabChain); mainwin.tabChain._scripts["OnClick"](mainwin.tabChain)  # two redraws of the chain
 check("the pane stays empty through a redraw", popup().empty)
 ns2.UI.OpenIds(lua.table_from([166, 5]))
@@ -2049,16 +2055,20 @@ def shown_links():
     return [f for f in G.stubs.values() if f.link is not None and f._shown]
 
 def where_of(qid):
-    return chain_row(qid).where._text
+    # the objective part of the where line (the pickup ! and hand-in ? zones after it are checked on their own)
+    return chain_row(qid).where._text.split("|cff8fb4c8|TInterface" + chr(92) + "GossipFrame" + chr(92) + "AvailableQuestIcon")[0]
 
 def links_of(qid):
     fs = chain_row(qid).where
-    return sorted((b for b in shown_links() if G.rawequal(b.fs, fs)), key=lambda b: b._pt[4])
+    return sorted((b for b in shown_links() if G.rawequal(b.fs, fs) and not b.link.ends), key=lambda b: b._pt[4])
 
 G.ForeverDungeonJournal_NS = None
 G.SlashCmdList["QUESTTHREAD"]("166")
 check("without the journal there is no Dungeon: segment", "Dungeon:" not in where_of(166), where_of(166))
 zl = links_of(166)
+full = chain_row(166).where._text
+check("a chain row's line ends with the pickup zone (!) and the hand-in zone (?), each a link of its own",
+      full.index("AvailableQuestIcon") < full.index("ActiveQuestIcon") and len([b for b in shown_links() if G.rawequal(b.fs, chain_row(166).where) and b.link.ends]) == 2, full)
 check("each zone of the where line is a link", [b.link.kind for b in zl] == ["zone", "zone"] and [b.link.area for b in zl] == [1, 12], [(b.link.kind, b.link.area) for b in zl])
 check("the first link starts at the text's left edge, the next one further right", zl[0]._pt[4] == 0 and zl[1]._pt[4] > 0, [b._pt[4] for b in zl])
 check("the links sit on the where line", G.rawequal(zl[0]._pt[2], chain_row(166).where))
@@ -2173,7 +2183,7 @@ G.SlashCmdList["QUESTTHREAD"]("")
 
 # ---- the Zones tab ----
 def zone_rows():
-    rs = [f for f in G.stubs.values() if f._shown and f.name is not None and f.tag is not None and f._pt is not None and f.status is not None]
+    rs = [f for f in G.stubs.values() if f._shown and f.name is not None and f.tag is not None and f._pt is not None and f.status is not None and not f.zoneRewards]  # (the rewards section has its own tests)
     return sorted(rs, key=lambda f: -f._pt[5])
 
 def chips():
@@ -2189,20 +2199,82 @@ check("/qthread zone <name> opens the Zones tab on that zone", ns2.UI.IsZoneMode
 check("the Zones tab is the lit one", mainwin.tabZone.under._shown and not mainwin.tabChain.under._shown)
 check("the filter starts on Available, the box asks for a zone", G.QuestThreadDB.zone.filter == "available" and mainwin.hint._text == "Zone name")
 check("the views are pill tabs in the header, the lit one on a plate", mainwin.tabZone.plate._shown and not mainwin.tabChain.plate._shown and mainwin.tabZone._size[1] == 58 and mainwin.tabZone._size[2] == 26 and not mainwin.tabLog.plate._shown)
-check("the search box leaves room for the three group tabs on the Zones tab", mainwin.box._w2 == 540 - 28 - 220 - 8, mainwin.box._w2)
+check("the search box leaves room for the three group tabs on the Zones tab", mainwin.box._w2 == 600 - 28 - 220 - 8, mainwin.box._w2)
 tz = Z.Model(12)
 evz = Z.Evaluate(tz)
 check("the progress bar is shown, with available in gold as wide as its share and no blue (nothing in your log)",
       mainwin.prog._shown and mainwin.progAvail._shown and not mainwin.progLog._shown
-      and mainwin.progAvail._size[1] == round(512 * evz.totals.available / evz.totals.quests)
-      and mainwin.progDone._shown == (round(512 * evz.totals.done / evz.totals.quests) > 0), (mainwin.progAvail._size, dict(evz.totals)))
+      and mainwin.progAvail._size[1] == round(572 * evz.totals.available / evz.totals.quests)
+      and mainwin.progDone._shown == (round(572 * evz.totals.done / evz.totals.quests) > 0), (mainwin.progAvail._size, dict(evz.totals)))
 check("the lit chip is on a plate, the others are not", chips()[0].plate._shown and not chips()[1].plate._shown and not chips()[4].plate._shown)
 check("section headers have a band", all(r.hl._shown for r in zone_rows() if r.entry is None))
 cs = chips()
 check("five filter chips with just their names (no counts), Missed among them, and no Grey chip", [c.key for c in cs] == ["available", "log", "missed", "done", "all"] and [c.text._text for c in cs] == ["Available", "In log", "Missed", "Done", "All"] and cs[0].under._shown and not cs[4].under._shown,
       [(c.key, c.text._text) for c in cs])
 rows = zone_rows()
-check("the list starts right under the chips", rows[0]._pt[5] == -32, rows[0]._pt)
+def reward_rows():
+    return sorted([f for f in G.stubs.values() if f._shown and f.zoneRewards and f._pt is not None], key=lambda f: -f._pt[5])
+def reward_ids(status_ok):
+    ids = set()
+    for qid in tz.quests.values():
+        if status_ok(evz.quest[qid].status):
+            r = ns2.Data.index.rewards[qid]
+            if r is not None:
+                ids.update(r.values())
+    return ids
+def strip_ids():
+    for f in reward_rows():
+        if f.icons is not None and len(list(f.icons.values())) > 0:
+            return set(b.itemId for b in f.icons.values())
+    return set()
+rr = reward_rows()
+check("the rewards section is the first thing under the chips, the list right under it",
+      rr and rr[0]._pt[5] == -32 and "Rewards of available quests" in rr[0].name._text and rows[0]._pt[5] < -32 and rows[0]._pt[5] <= rr[-1]._pt[5] - rr[-1]._h + 0.001,
+      (rr[0]._pt, rows[0]._pt))
+check("... open (minus icon), saying how many items from how many quests", rr[0].fold._shown and rr[0].fold._tex == "Interface\\Buttons\\UI-MinusButton-Up" and " items from " in rr[0].xp._text or " item from " in rr[0].xp._text, rr[0].xp._text)
+want = reward_ids(lambda s: s == "available")
+check("the strip holds each reward item of the available quests, once", len(want) > 0 and strip_ids() == want, (sorted(want), sorted(strip_ids())))
+rr[0]._scripts["OnClick"](rr[0], "LeftButton")
+check("a click on its header folds it shut: only the header is left, and that is remembered",
+      len(reward_rows()) == 1 and reward_rows()[0].fold._tex == "Interface\\Buttons\\UI-PlusButton-Up" and G.QuestThreadDB.zone.rewardsClosed is True, [r.name._text for r in reward_rows()])
+reward_rows()[0]._scripts["OnClick"](reward_rows()[0], "LeftButton")
+check("... and opens again", len(reward_rows()) >= 2 and G.QuestThreadDB.zone.rewardsClosed is None)
+cs0 = chips()
+check("with a chip other than All there is no 'completed quests' switch", not any("Completed quests" in (r.name._text or "") for r in reward_rows()))
+item_quests = {}
+for qid in tz.quests.values():
+    r = ns2.Data.index.rewards[qid]
+    for i in (r.values() if r is not None else []):
+        item_quests.setdefault(i, set()).add(qid)
+qx = next(q for q in tz.quests.values() if evz.quest[q].status == "available" and ns2.Data.index.rewards[q] is not None
+          and any(len(item_quests[i]) == 1 for i in ns2.Data.index.rewards[q].values()))
+G.C_QuestLog.IsQuestFlaggedCompleted = lua.eval("function(id) return id == 65 or id == %d end" % qx)  # one more quest of the zone is done
+evz = Z.Evaluate(tz)
+cs0[4]._scripts["OnClick"](cs0[4])  # All
+rr = reward_rows()
+tog = next((r for r in rr if "Completed quests are left out" in (r.name._text or "")), None)
+all_not_done = reward_ids(lambda s: s != "done")
+all_ids = reward_ids(lambda s: True)
+check("on All, completed quests are left out by default, and a row says so",
+      tog is not None and strip_ids() == all_not_done and "Rewards of all quests" in rr[0].name._text, (sorted(strip_ids()), sorted(all_not_done)))
+check("(setup) a completed quest of the zone has a reward the others do not, so leaving it out is visible", len(all_ids - all_not_done) > 0, (sorted(all_ids), sorted(all_not_done)))
+tog._scripts["OnClick"](tog, "LeftButton")
+rr = reward_rows()
+tog = next((r for r in rr if "Completed quests are included" in (r.name._text or "")), None)
+check("the row switches them in: their rewards join the strip, and the choice is remembered",
+      tog is not None and strip_ids() == all_ids and G.QuestThreadDB.zone.keepDone is True, (sorted(strip_ids()), sorted(all_ids)))
+tog._scripts["OnClick"](tog, "LeftButton")
+check("... and out again", strip_ids() == all_not_done and G.QuestThreadDB.zone.keepDone is None)
+cs0 = chips()
+cs0[3]._scripts["OnClick"](cs0[3])  # Done
+check("on Done the strip shows what the completed quests gave, and there is no switch",
+      strip_ids() == reward_ids(lambda s: s == "done") and not any("Completed quests" in (r.name._text or "") for r in reward_rows()))
+G.C_QuestLog.IsQuestFlaggedCompleted = lua.eval("function(id) return id == 65 end")
+evz = Z.Evaluate(tz)
+cs0 = chips()
+cs0[0]._scripts["OnClick"](cs0[0])  # back to Available
+rows = zone_rows()
+check("the list starts right under the rewards section", rows[0]._pt[5] < -32, rows[0]._pt)
 heads = [r.name._text for r in rows if r.entry is None]
 check("by type: sections for chains and single quests", any("Chains" in h for h in heads) and any("Single quests" in h for h in heads), heads)
 # the sections fold shut
@@ -2702,6 +2774,140 @@ mainwin.tabChain._scripts["OnClick"](mainwin.tabChain)
 check("and it goes again on the Chains tab", not mainwin.toggle._shown)
 G.SlashCmdList["QUESTTHREAD"]("")
 
+# ---- items you need across the chain (and which of them the auction house trades) ----
+check("Tradable: no binding, bind on equip and bind on use can be auctioned",
+      Core.Tradable(0) is True and Core.Tradable(2) is True and Core.Tradable(3) is True)
+check("Tradable: soulbound and quest items cannot", Core.Tradable(1) is False and Core.Tradable(4) is False)
+check("Tradable: no item info yet is unknown, not no", Core.Tradable(None) is None)
+check("Money: gold, silver and copper, only the parts that are not zero",
+      Core.Money(12345) == "1g 23s 45c" and Core.Money(100) == "1s" and Core.Money(3800) == "38s" and Core.Money(10005) == "1g 5c" and Core.Money(0) == "" and Core.Money(None) == "")
+needs_entries = lua.eval("function() return { {id=1,status='done'}, {id=2,status='available'}, {id=3,status='done'} } end")()
+needs_objs = lua.eval("""function(id)
+  if id == 1 then return { {kind='item',id=5,name='Wolf Meat',from={'Wolf','Bear'}}, {kind='kill',id=9,name='Boar'} } end
+  if id == 2 then return { {kind='item',id=5,name='Wolf Meat',from={'Wolf','Boar'}}, {kind='item',id=6,name='Linen',from={}} } end
+  return { {kind='item',id=7,name='Old Key',from={}} }
+end""")
+needs_sum = lua.eval("function(n) local t = {} for _, x in ipairs(n) do t[#t + 1] = x.id .. ':' .. #x.quests .. ':' .. tostring(x.done) .. ':' .. table.concat(x.from, '/') end return table.concat(t, '|') end")
+check("Needs: each item once, in chain order, with every quest that asks for it, its droppers merged, done only when all its quests are",
+      needs_sum(Core.Needs(needs_entries, needs_objs)) == "5:2:false:Wolf/Bear/Boar|6:1:false:|7:1:true:", needs_sum(Core.Needs(needs_entries, needs_objs)))
+
+G.C_Item.GetItemInfo = lua.eval("function(id) return nil end")
+G.testRequested = lua.table()
+G.C_Item.RequestLoadItemDataByID = lua.eval("function(id) testRequested[#testRequested + 1] = id end")
+ns2.Data.ItemTrade(9001); ns2.Data.ItemTrade(9001)
+check("an item the game has not described yet is asked for once and is unknown meanwhile",
+      ns2.Data.ItemTrade(9001) is None and list(G.testRequested.values()) == [9001], list(G.testRequested.values()))
+G.Auctionator = None
+check("without Auctionator there is no price and the addon says so", ns2.Data.AhPrice(777) is None and not ns2.Data.HasAuctionator())
+G.Auctionator = lua.eval("{ API = { v1 = { GetAuctionPriceByItemID = function(caller, id) if id == 13 then error('bad') end return id == 777 and 3800 or 0 end } } }")
+check("Auctionator's price is read for an item, and a failing or empty answer is no price",
+      ns2.Data.AhPrice(777) == 3800 and ns2.Data.AhPrice(13) is None and ns2.Data.AhPrice(5) is None and ns2.Data.HasAuctionator())
+G.Auctionator = None
+
+def need_strip():
+    for f in G.stubs.values():
+        if f._shown and f.name is not None and f.name._text and f.name._text.startswith("Items you need"):
+            return f
+def need_icons(strip):
+    return [b for b in strip.icons.values()] if strip is not None and strip.icons is not None else []
+def need_rows():
+    return [f for f in G.stubs.values() if f._shown and f.need is not None and f.xp is not None]  # (the icons carry .need too)
+
+G.SlashCmdList["QUESTTHREAD"]("166")
+strip = need_strip()
+check("a chain whose quest asks for an item gets an 'items you need' row", strip is not None and len(need_icons(strip)) == 1 and need_icons(strip)[0].itemId == 777)
+check("... that says it is still checking, with no coin, until the game describes the item",
+      "checking" in strip.name._text and not need_icons(strip)[0].badge._shown)
+G.C_Item.GetItemInfo = lua.eval("function(id) return 'Odd Thing', 'link', 1, 1, 1, 'Misc', 'Junk', 1, '', 100, 5, 15, 0, 0 end")
+kwin = frame_named("QuestThreadFrame")
+kwin._shown = True
+kwin._scripts["OnEvent"](kwin, "GET_ITEM_INFO_RECEIVED", 777)
+strip = need_strip()
+check("when the game describes the item the row is drawn again: a coin, and the count on the auction house",
+      strip is not None and "checking" not in strip.name._text and "1 item, 1 can be bought or sold" in strip.name._text and need_icons(strip)[0].badge._shown, strip and strip.name._text)
+G.tipLines = lua.table()
+need_icons(strip)[0]._scripts["OnEnter"](need_icons(strip)[0])
+tl = list(G.tipLines.values())
+check("its tooltip names the quest that needs it and says Auctionator is needed for a price",
+      any(t.startswith("Needed for: ") for t in tl) and any("install Auctionator" in t for t in tl), tl)
+G.Auctionator = lua.eval("{ API = { v1 = { GetAuctionPriceByItemID = function(caller, id) return 3800 end } } }")
+G.SlashCmdList["QUESTTHREAD"]("166")
+strip = need_strip()
+G.tipLines = lua.table()
+need_icons(strip)[0]._scripts["OnEnter"](need_icons(strip)[0])
+check("with Auctionator the tooltip gives the price per item", any("38s each" in t for t in G.tipLines.values()), list(G.tipLines.values()))
+check("the list is closed to begin with", len(need_rows()) == 0)
+strip._scripts["OnClick"](strip, "LeftButton")
+nr = need_rows()
+check("a click on the row opens the list: one row per item with its price", len(nr) == 1 and "38s" in nr[0].xp._text and "Odd Thing" in nr[0].name._text, [r.xp._text for r in nr])
+foot = [f for f in G.stubs.values() if f._shown and f.rep is not None and f.rep._shown and f.rep._text and f.rep._text.startswith("One of each priced item")]
+check("... and a line under it adds the priced items up and says counts are not known", len(foot) == 1 and "38s" in foot[0].rep._text and "Counts are not in QuestieDB" in foot[0].rep._text, [f.rep._text for f in foot])
+check("... and the row says Hide list", "Hide list" in need_strip().tag._text)
+need_strip()._scripts["OnClick"](need_strip(), "LeftButton")
+check("a second click closes the list again", len(need_rows()) == 0 and "Show list" in need_strip().tag._text)
+G.C_Item.GetItemInfo = lua.eval("function(id) return 'Odd Thing', 'link', 1, 1, 1, 'Quest', 'Quest', 1, '', 100, 0, 12, 0, 4 end")
+G.SlashCmdList["QUESTTHREAD"]("166")
+strip = need_strip()
+G.tipLines = lua.table()
+need_icons(strip)[0]._scripts["OnEnter"](need_icons(strip)[0])
+check("a quest item gets no coin and the tooltip says it is not on the auction house",
+      not need_icons(strip)[0].badge._shown and "can be bought or sold" not in strip.name._text and any("Not on the auction house" in t for t in G.tipLines.values()), list(G.tipLines.values()))
+check("a quest item carries the quest '!' and no coin (nothing sells or buys it)",
+      need_icons(strip)[0].qmark._shown and not need_icons(strip)[0].badge._shown and any("Quest item" in t for t in G.tipLines.values()), list(G.tipLines.values()))
+strip._scripts["OnClick"](strip, "LeftButton")
+qrow = need_rows()
+check("... and its list row says 'quest item' with the '!' in front", len(qrow) == 1 and "quest item" in qrow[0].xp._text and "AvailableQuestIcon" in qrow[0].xp._text, [r.xp._text for r in qrow])
+strip._scripts["OnClick"](strip, "LeftButton")
+G.ItemDB.vendors = lua.eval("function(id) if id == 777 then return { 1000 } end end")
+G.C_Item.GetItemInfo = lua.eval("function(id) return 'Odd Thing', 'link', 1, 1, 1, 'Misc', 'Junk', 1, '', 100, 5, 15, 0, 0 end")
+G.SlashCmdList["QUESTTHREAD"]("166")
+strip = need_strip()
+G.tipLines = lua.table()
+need_icons(strip)[0]._scripts["OnEnter"](need_icons(strip)[0])
+tl = list(G.tipLines.values())
+check("an ordinary item that a vendor sells and buys gets the coin, not the '!'",
+      need_icons(strip)[0].badge._shown and not need_icons(strip)[0].qmark._shown and need_icons(strip)[0].badge._shown, None)
+check("... and its tooltip says who sells it and what a vendor pays",
+      any("Sold by vendors" in t for t in tl) and any("A vendor pays 5c" in t for t in tl), tl)
+strip._scripts["OnClick"](strip, "LeftButton")
+vrow = need_rows()
+check("... and its list row has the coin in front", len(vrow) == 1 and "UI-GoldIcon" in vrow[0].xp._text and "AvailableQuestIcon" not in vrow[0].xp._text, [r.xp._text for r in vrow])
+strip = need_strip()
+strip._scripts["OnClick"](strip, "LeftButton")
+G.C_Item.GetItemInfo = lua.eval("function(id) return 'Odd Thing', 'link', 1, 1, 1, 'Misc', 'Junk', 1, '', 100, 0, 15, 0, 1 end")
+G.ItemDB.vendors = None
+G.SlashCmdList["QUESTTHREAD"]("166")
+strip = need_strip()
+check("an item nobody buys or sells (soulbound, sells for nothing) has neither mark",
+      not need_icons(strip)[0].badge._shown and not need_icons(strip)[0].qmark._shown)
+# Morrowgrain: in the game's Quest class but unbound, so it is no quest item and the auction house trades it
+G.C_Item.GetItemInfo = lua.eval("function(id) return 'Morrowgrain', 'link', 1, 1, 1, 'Quest', 'Quest', 1, '', 100, 1, 12, 0, 0 end")
+G.SlashCmdList["QUESTTHREAD"]("166")
+strip = need_strip()
+check("an unbound item in the Quest class (Morrowgrain) is no quest item: a coin, no '!'",
+      need_icons(strip)[0].badge._shown and not need_icons(strip)[0].qmark._shown and "1 can be bought or sold" in strip.name._text, strip.name._text)
+# a soulbound item a vendor buys: the coin still (vendor), and the tooltip says the auction house does not trade it
+G.C_Item.GetItemInfo = lua.eval("function(id) return 'Odd Thing', 'link', 1, 1, 1, 'Misc', 'Junk', 1, '', 100, 5, 15, 0, 1 end")
+G.SlashCmdList["QUESTTHREAD"]("166")
+strip = need_strip()
+G.tipLines = lua.table()
+need_icons(strip)[0]._scripts["OnEnter"](need_icons(strip)[0])
+check("a soulbound item a vendor buys gets the coin, and the tooltip says it is not on the auction house",
+      need_icons(strip)[0].badge._shown and any("Not on the auction house" in t for t in G.tipLines.values()) and any("A vendor pays 5c" in t for t in G.tipLines.values()), list(G.tipLines.values()))
+G.Auctionator = None
+G.C_Item.GetItemInfo = None
+G.QuestThreadDB.needsOpen = None
+G.SlashCmdList["QUESTTHREAD"]("")
+
+# ---- long names are cut to their box, not run on under the XP ----
+fit_len = lua.eval("function(n) return function(s) return #s <= n end end")
+check("Shorten: a name that fits is left alone", Core.Shorten("Rhapsody", fit_len(10)) == "Rhapsody")
+check("Shorten: a long name is cut so that name and '...' fit", Core.Shorten("Rhapsody's Kalimdor Kocktail", fit_len(14)) == "Rhapsody's ...", Core.Shorten("Rhapsody's Kalimdor Kocktail", fit_len(14)))
+utf = "Caf" + chr(233) * 6  # an accented letter is two bytes: never cut in the middle
+cut = Core.Shorten(utf, fit_len(9))
+check("Shorten: whole UTF-8 characters only", cut.endswith("...") and cut[:-3].encode("utf-8").decode("utf-8") == cut[:-3] and len(cut.encode("utf-8")) <= 9, cut)
+check("Shorten: a box too small for anything still ends", Core.Shorten("Long name", fit_len(0)) == "...")
+check("the window is 600 wide plus the pane", mainwin._w2 == 910, mainwin._w2)
 # ---- the chain icon file ----
 import re
 import struct

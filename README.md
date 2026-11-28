@@ -83,6 +83,22 @@ tabs, the search box with its magnifier, the quest or zone you are looking at wi
   does Escape. This works like Wowhead Quick Link and is only listening while the mouse is on a quest and you are
   out of combat, so it never takes your movement keys.
 - XP per quest and for the chain, reputation totals, and every reward item (hover for its tooltip).
+- **Zone rewards:** the Zones tab opens with a foldable "Rewards of ..." strip: every reward item of the quests the
+  chosen chip shows (Available, In log, Missed, Done or All), each once, hover for its tooltip. On the All chip a line
+  under it leaves completed quests out (on by default) or brings them in. Folded or open is remembered.
+- **Pickup and turn-in marks:** wherever a quest's pickup and hand-in are shown (the hover tooltip's Starts / Ends
+  lines, the details pane's Starts / Hand in, and the "Hand in:" lines), pickup has the yellow **!** and hand-in the
+  yellow **?**, as on the map. A quest's line in the chain list also ends with its pickup zone (!) and its hand-in
+  zone (?), each a link to that zone's map, after the zones of its objectives.
+- **Items you need across the chain:** under the rewards, a second strip shows every item the chain's quests ask
+  you to collect, each once. Items that can be bought or sold, at the **auction house** or to a **vendor**, carry a
+  small gold coin; a real quest item (bound to the quest) gets the yellow **!** instead. An item that is only in the
+  game's "Quest" class but unbound, like Morrowgrain, is tradable and gets the coin. Items
+  whose quests are all done are dimmed. Hover one for the quests that need it, what drops it, which vendors sell it,
+  what a vendor pays and its auction price. Click the strip (**Show list**) for one row per item with the same marks
+  and its price, and a line adding the priced items up.
+  Prices come from **Auctionator** when it is installed (optional; the coin and the list work without it). QuestieDB
+  has no item counts, so prices are per item and the list cannot say "4 of these".
 - **Breadcrumb quests:** an optional quest that hands you a chain quest earlier appears as an indented
   "Breadcrumb" row right above the quest it leads into, with its own status icon, zone and ID (Ctrl+C, click and
   tooltip work as on any row). It says "No longer needed" once you already have or finished the quest it leads

@@ -371,6 +371,21 @@ function Data.Locate(giver, questId)
   return { area = area, x = x, y = y, uiMap = Data.UiMap(area) }
 end
 
+-- Where a quest is picked up and handed in: { start = place|nil, finish = place|nil } (Data.Locate of the first giver of each).
+-- Cached, since a chain row asks on every redraw.
+local endsCache = {}
+function Data.EndPlaces(id)
+  local hit = endsCache[id]
+  if hit then return hit end
+  hit = {}
+  local g = Data.Givers(id, "start")[1]
+  hit.start = g and Data.Locate(g, id) or nil
+  g = Data.Givers(id, "end")[1]
+  hit.finish = g and Data.Locate(g, id) or nil
+  endsCache[id] = hit
+  return hit
+end
+
 function Data.PlaceText(place)
   return ("%s (%.0f, %.0f)"):format(Data.ZoneName(place.area, place.uiMap), place.x, place.y)
 end
@@ -444,6 +459,62 @@ function Data.ObjectivePlace(id)
   local area, x, y, obj = Core.BestSpot(w.objs, function(a) return Data.UiMap(a) ~= nil end)
   if not area then return nil end
   return { area = area, x = x, y = y, uiMap = Data.UiMap(area), objective = obj }
+end
+
+-- The items a list of chain quests asks you to collect, each once (Core.Needs), with what each quest asks.
+function Data.ChainNeeds(entries)
+  return Core.Needs(entries, function(id) return Data.Where(id).objs end)
+end
+
+-- Auctionator's price for one of an item (copper), or nil: not installed, or it has never seen the item.
+-- Optional: nothing here needs Auctionator, and its API is called under pcall (it raises on a bad argument).
+function Data.AhPrice(id)
+  local a = _G.Auctionator
+  local v1 = type(a) == "table" and type(a.API) == "table" and a.API.v1
+  if type(v1) ~= "table" or type(v1.GetAuctionPriceByItemID) ~= "function" then return nil end
+  local ok, price = pcall(v1.GetAuctionPriceByItemID, "QuestThread", id)
+  if ok and type(price) == "number" and price > 0 then return price end
+  return nil
+end
+
+function Data.HasAuctionator()
+  local a = _G.Auctionator
+  return type(a) == "table" and type(a.API) == "table" and type(a.API.v1) == "table"
+    and type(a.API.v1.GetAuctionPriceByItemID) == "function"
+end
+
+-- Can this item go on the auction house, and for how much? { ah, price (copper), quest (a quest item), sells (what a
+-- vendor pays, copper), buy (a vendor sells it), vendors (a few of their names), coin (can be bought or sold at the
+-- auction house or a vendor) }, or nil while
+-- the game has not told us about the item yet (it is asked to, and fires GET_ITEM_INFO_RECEIVED when it knows).
+local PENDING = {}
+function Data.ItemTrade(id)
+  local get = C_Item and C_Item.GetItemInfo or GetItemInfo
+  if not get then return nil end
+  local ok, name, _, _, _, _, _, _, _, _, _, sellPrice, classID, _, bindType = pcall(get, id)
+  if not ok or not name then
+    if not PENDING[id] then
+      PENDING[id] = true
+      if C_Item and C_Item.RequestLoadItemDataByID then pcall(C_Item.RequestLoadItemDataByID, id) end
+    end
+    return nil
+  end
+  local ah = Core.Tradable(bindType)
+  if ah == nil then return nil end
+  local quest = bindType == 4 -- a real quest item (bound to the quest), not just one in the Quest class
+  local sells = (not quest and type(sellPrice) == "number" and sellPrice > 0) and sellPrice or nil -- what a vendor pays
+  -- vendors that sell it (QuestieDB), a few by name
+  local names, buy = {}, false
+  local ok2, npcs = pcall(function() return ItemDB and ItemDB.vendors and ItemDB.vendors(id) end)
+  if ok2 and type(npcs) == "table" and #npcs > 0 then
+    buy = true
+    for _, npc in ipairs(npcs) do
+      local n = NpcDB and NpcDB.name and NpcDB.name(npc)
+      if n and #names < 2 then names[#names + 1] = n end
+    end
+  end
+  return { ah = ah, price = ah and Data.AhPrice(id) or nil, quest = quest, sells = sells, buy = buy, vendors = names,
+           coin = (ah or buy or sells ~= nil) and true or false } -- can be bought or sold somewhere
 end
 
 function Data.Search(text)
